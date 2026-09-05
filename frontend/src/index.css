@@ -1,0 +1,146 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: Arial, sans-serif;
+  min-height: 100vh;
+  background: #f8f9fb;
+  color: #111827;
+}
+
+button {
+  font-family: inherit;
+  border: none;
+  cursor: pointer;
+}
+
+.landing-page {
+  min-height: 100vh;
+}
+
+/* Navbar */
+
+.navbar {
+  height: 72px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 7%;
+  border-bottom: 1px solid #e5e7eb;
+  background: white;
+}
+
+.logo {
+  font-size: 25px;
+  font-weight: 700;
+}
+
+.login-btn {
+  background: transparent;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* Hero */
+
+.hero {
+  min-height: calc(100vh - 72px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.hero-content {
+  max-width: 700px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #eef2ff;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 24px;
+}
+
+h1 {
+  font-size: clamp(45px, 7vw, 78px);
+  line-height: 1.05;
+  letter-spacing: -3px;
+  margin-bottom: 25px;
+}
+
+h1 span {
+  color: #6366f1;
+}
+
+.hero-content p {
+  max-width: 580px;
+  margin: 0 auto 32px;
+  font-size: 19px;
+  line-height: 1.6;
+  color: #6b7280;
+}
+
+.hero-buttons {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.google-btn,
+.signup-btn {
+  padding: 14px 24px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.google-btn {
+  background: #111827;
+  color: white;
+}
+
+.signup-btn {
+  background: white;
+  color: #111827;
+  border: 1px solid #d1d5db;
+}
+
+.hero-content small {
+  display: block;
+  margin-top: 22px;
+  color: #9ca3af;
+}
+
+/* Mobile */
+
+@media (max-width: 600px) {
+  .navbar {
+    padding: 0 20px;
+  }
+
+  h1 {
+    letter-spacing: -2px;
+  }
+
+  .hero-content p {
+    font-size: 17px;
+  }
+
+  .google-btn,
+  .signup-btn {
+    width: 100%;
+  }
+
+  .hero-buttons {
+    flex-direction: column;
+  }
+}
