@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { ArrowRight } from "lucide-react";
 
 function Navbar() {
   return (
@@ -8,7 +9,8 @@ function Navbar() {
       </Link>
 
       <Link to="/login" className="login-btn">
-        Log in
+        <span>Log in</span>
+        <ArrowRight size={17} />
       </Link>
     </nav>
   );

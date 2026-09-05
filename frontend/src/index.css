@@ -85,51 +85,64 @@ a {
   position: relative;
   z-index: 20;
 }
-
 .logo {
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: -0.8px;
+  color: #0b2545;
+  text-decoration: none;
 
-  color: #0a2540;
+  font-size: 25px;
+  font-weight: 750;
+  letter-spacing: -1px;
 
   transition: opacity 0.2s ease;
 }
 
 .logo:hover {
-  opacity: 0.7;
+  opacity: 0.75;
 }
 
 .login-btn {
-  padding: 10px 17px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 
-  border: 1px solid #e2e6ef;
-  border-radius: 9px;
+  padding: 11px 17px;
 
   background: rgba(255, 255, 255, 0.8);
 
-  color: #0a2540;
+  border: 1px solid #e1e5ee;
+  border-radius: 11px;
 
-  font-size: 14px;
-  font-weight: 600;
+  color: #0b2545;
 
-  box-shadow: 0 3px 10px rgba(50, 50, 93, 0.05);
+  font-size: 15px;
+  font-weight: 650;
+
+  text-decoration: none;
+
+  box-shadow: 0 4px 12px rgba(20, 40, 80, 0.05);
 
   transition:
     transform 0.2s ease,
     box-shadow 0.2s ease,
-    background 0.2s ease;
+    border-color 0.2s ease;
 }
 
 .login-btn:hover {
-  transform: translateY(-1px);
+  transform: translateY(-2px);
 
-  background: white;
+  border-color: #cfd5e2;
 
-  box-shadow: 0 6px 18px rgba(50, 50, 93, 0.09);
+  box-shadow:
+    0 8px 20px rgba(20, 40, 80, 0.09);
 }
 
+.login-btn svg {
+  transition: transform 0.2s ease;
+}
 
+.login-btn:hover svg {
+  transform: translateX(3px);
+}
 /* ========================================
    HERO
 ======================================== */
@@ -1144,4 +1157,64 @@ h1 span {
     left: -100px;
     bottom: -60px;
   }
+}
+
+.google-btn,
+.signup-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+
+  text-decoration: none;
+
+  padding: 14px 24px;
+  border-radius: 10px;
+
+  font-size: 15px;
+  font-weight: 650;
+
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.google-btn:hover {
+  transform: translateY(-2px);
+
+  box-shadow:
+    0 12px 25px rgba(11, 37, 69, 0.18);
+}
+
+.signup-btn:hover {
+  transform: translateY(-2px);
+
+  box-shadow:
+    0 10px 24px rgba(90, 70, 200, 0.10);
+}
+
+.signup-btn svg {
+  transition: transform 0.2s ease;
+}
+
+.signup-btn:hover svg {
+  transform: translateX(4px);
+}
+
+.google-icon {
+  width: 23px;
+  height: 23px;
+
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 50%;
+
+  background: white;
+
+  color: #4285f4;
+
+  font-size: 15px;
+  font-weight: 800;
 }

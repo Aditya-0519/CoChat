@@ -23,7 +23,7 @@ function Landing() {
           {/* Badge */}
           <div className="badge">
             <GraduationCap size={16} />
-            <span>College students only</span>
+            <span>College students</span>
           </div>
 
           {/* Heading */}
