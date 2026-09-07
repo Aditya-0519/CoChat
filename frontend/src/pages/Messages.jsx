@@ -547,99 +547,171 @@ function Messages() {
      LOAD SELECTED CONVERSATION
   ======================================================= */
 
-  useEffect(() => {
-    let mounted = true;
+useEffect(() => {
+  let mounted = true;
 
-    const loadSelectedConversation =
-      async () => {
-        if (!conversationId) {
-          setConversation(null);
-          setMessages([]);
-          setReadState(null);
-          setHasMoreMessages(false);
-          setNextCursor(null);
-          setLoading(false);
-          return;
-        }
+  const loadSelectedConversation = async () => {
+    if (!conversationId) {
+      setConversation(null);
+      setMessages([]);
+      setReadState(null);
+      setHasMoreMessages(false);
+      setNextCursor(null);
+      setError("");
+      setLoading(false);
+      return;
+    }
 
-        try {
-          setLoading(true);
-          setError("");
-          initialScrollRef.current = true;
+    try {
+      setLoading(true);
+      setError("");
+      initialScrollRef.current = true;
 
-          const [
-            conversationData,
-            messageData,
-            stateData,
-          ] = await Promise.all([
-            getConversation(
-              conversationId
-            ),
-            getMessages(
-              conversationId,
-              {
-                limit: 30,
-              }
-            ),
-            getMessageState(
-              conversationId
-            ),
-          ]);
+      /*
+       * Load the actual conversation first.
+       *
+       * This is the critical request. If it succeeds,
+       * the chat UI should be allowed to render.
+       */
+      const conversationData =
+        await getConversation(conversationId);
 
-          if (!mounted) {
-            return;
-          }
+      if (!mounted) {
+        return;
+      }
 
-          setConversation(
-            conversationData?.conversation ||
-              null
-          );
+      const loadedConversation =
+        conversationData?.conversation || null;
 
-          setMessages(
-            messageData?.messages || []
-          );
+      if (!loadedConversation) {
+        throw new Error(
+          "Conversation could not be loaded."
+        );
+      }
 
-          setHasMoreMessages(
-            Boolean(
-              messageData?.pagination?.hasMore
-            )
-          );
+      setConversation(loadedConversation);
 
-          setNextCursor(
-            messageData?.pagination?.nextCursor ||
-              null
-          );
+      /*
+       * Messages are required for the chat history,
+       * but message-state is optional. Do not let a
+       * receipt/read-state failure hide the entire chat.
+       */
+      const [messageResult, stateResult] =
+        await Promise.allSettled([
+          getMessages(conversationId, {
+            limit: 30,
+          }),
 
-          setReadState(
-            stateData?.state || null
-          );
-        } catch (loadError) {
-          if (!mounted) {
-            return;
-          }
+          getMessageState(conversationId),
+        ]);
 
-          setError(
-            loadError.message ||
-              "Unable to load conversation."
-          );
+      if (!mounted) {
+        return;
+      }
 
-          setConversation(null);
-          setMessages([]);
-          setReadState(null);
-        } finally {
-          if (mounted) {
-            setLoading(false);
-          }
-        }
-      };
+      /*
+       * MESSAGE HISTORY
+       */
+      if (
+        messageResult.status === "fulfilled"
+      ) {
+        const messageData =
+          messageResult.value;
 
-    loadSelectedConversation();
+        setMessages(
+          messageData?.messages || []
+        );
 
-    return () => {
-      mounted = false;
-    };
-  }, [conversationId]);
+        setHasMoreMessages(
+          Boolean(
+            messageData?.pagination?.hasMore
+          )
+        );
 
+        setNextCursor(
+          messageData?.pagination?.nextCursor ||
+            null
+        );
+      } else {
+        console.error(
+          "Load messages error:",
+          messageResult.reason
+        );
+
+        setMessages([]);
+        setHasMoreMessages(false);
+        setNextCursor(null);
+
+        setError(
+          messageResult.reason?.message ||
+            "Unable to load messages."
+        );
+      }
+
+      /*
+       * MESSAGE STATE
+       *
+       * Backend returns:
+       *   { readState, receipts }
+       *
+       * Older frontend code incorrectly expected:
+       *   { state }
+       */
+      if (
+        stateResult.status === "fulfilled"
+      ) {
+        const stateData =
+          stateResult.value;
+
+        setReadState(
+          stateData?.readState || null
+        );
+      } else {
+        /*
+         * Read state is optional. The chat itself
+         * must continue working when this request
+         * fails.
+         */
+        console.warn(
+          "Message state unavailable:",
+          stateResult.reason
+        );
+
+        setReadState(null);
+      }
+    } catch (loadError) {
+      if (!mounted) {
+        return;
+      }
+
+      console.error(
+        "Load selected conversation error:",
+        loadError
+      );
+
+      setConversation(null);
+      setMessages([]);
+      setReadState(null);
+      setHasMoreMessages(false);
+      setNextCursor(null);
+
+      setError(
+        loadError.message ||
+          "Unable to load conversation."
+      );
+    } finally {
+      if (mounted) {
+        setLoading(false);
+      }
+    }
+  };
+
+  loadSelectedConversation();
+
+  return () => {
+    mounted = false;
+  };
+}, [conversationId]);
 
   /* =======================================================
      LOAD MUTE + BLOCK STATE
@@ -2320,6 +2392,19 @@ function Messages() {
                 Select a conversation to
                 start chatting.
               </p>
+
+              {error && (
+  <div
+    className="messages-error"
+    style={{
+      marginTop: 16,
+      maxWidth: 420,
+      textAlign: "center",
+    }}
+  >
+    {error}
+  </div>
+)}
 
             </div>
 
