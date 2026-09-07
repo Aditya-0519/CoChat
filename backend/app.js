@@ -49,6 +49,11 @@ const corsOptions = {
 
 connectDB();
 
+// Render (and most hosts) put the app behind a reverse proxy. Without this,
+// Express can't correctly tell whether the original request was HTTPS,
+// which matters for secure-cookie handling.
+app.set("trust proxy", 1);
+
 app.disable("x-powered-by");
 app.use((req, res, next) => {
   res.setHeader("X-Content-Type-Options", "nosniff");

@@ -19,6 +19,20 @@ const googleClient = new OAuth2Client(
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
 
+/*
+ * Cookie policy is derived from whether FRONTEND_URL is https, NOT from
+ * NODE_ENV. Frontend (Vercel) and backend (Render) live on different
+ * domains, so this is a cross-site deployment regardless of NODE_ENV.
+ * Cross-site cookies require SameSite=None; Secure, or browsers will
+ * silently refuse to send them back on fetch requests (only Lax cookies
+ * survive top-level navigations, not XHR/fetch). Relying on NODE_ENV was
+ * the bug: if it isn't set on the host, the cookie quietly downgrades to
+ * SameSite=Lax and gets dropped on every cross-site request, so the user
+ * is "logged in" only until the page is refreshed.
+ */
+const isCrossSiteDeployment =
+  (process.env.FRONTEND_URL || "").trim().startsWith("https://");
+
 const createToken = (userId) => {
   return jwt.sign(
     { userId },
@@ -30,13 +44,10 @@ const createToken = (userId) => {
 };
 
 const setTokenCookie = (res, token) => {
-  const isProduction =
-    process.env.NODE_ENV === "production";
-
   res.cookie("token", token, {
     httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? "none" : "lax",
+    secure: isCrossSiteDeployment,
+    sameSite: isCrossSiteDeployment ? "none" : "lax",
     maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 };
@@ -460,13 +471,10 @@ router.get(
 router.post(
   "/logout",
   (req, res) => {
-    const isProduction =
-      process.env.NODE_ENV === "production";
-
     res.clearCookie("token", {
       httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction
+      secure: isCrossSiteDeployment,
+      sameSite: isCrossSiteDeployment
         ? "none"
         : "lax",
     });
