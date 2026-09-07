@@ -12,7 +12,6 @@ const router = express.Router();
 const googleClient = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID
 );
-
 // ==========================================
 // HELPERS
 // ==========================================
@@ -30,57 +29,50 @@ const createToken = (userId) => {
 };
 
 /*
-|--------------------------------------------------------------------------
-| AUTH COOKIE
-|--------------------------------------------------------------------------
-|
-| Production:
-|   Vercel frontend
-|        ↓
-|   Render backend
-|
-| Because frontend and backend are on different sites,
-| the production cookie needs:
-|
-|   SameSite=None
-|   Secure=true
-|
-| Render is behind a proxy, so we use both req.secure
-| and x-forwarded-proto to reliably detect HTTPS.
-|
-*/
+ * Persistent authentication cookie.
+ *
+ * Production:
+ * - HTTPS
+ * - Secure
+ * - SameSite=None
+ * - 7-day Max-Age
+ * - explicit 7-day Expires
+ * - Path=/
+ *
+ * Development:
+ * - HTTP
+ * - SameSite=Lax
+ */
+const getTokenCookieOptions = () => {
+  const isProduction =
+    process.env.NODE_ENV === "production";
 
-const setTokenCookie = (
-  req,
-  res,
-  token
-) => {
-  const isHttps =
-    req.secure === true ||
-    req.headers["x-forwarded-proto"] ===
-      "https";
+  const maxAge = 7 * 24 * 60 * 60 * 1000;
 
-  res.cookie("token", token, {
+  return {
     httpOnly: true,
 
-    secure: isHttps,
+    secure: isProduction,
 
-    sameSite: isHttps
+    sameSite: isProduction
       ? "none"
       : "lax",
 
     path: "/",
 
-    maxAge:
-      7 * 24 * 60 * 60 * 1000,
-  });
+    maxAge,
+
+    expires: new Date(Date.now() + maxAge),
+  };
 };
 
-/*
-|--------------------------------------------------------------------------
-| USER RESPONSE
-|--------------------------------------------------------------------------
-*/
+const setTokenCookie = (res, token) => {
+  res.cookie(
+    "token",
+    token,
+    getTokenCookieOptions()
+  );
+};
 
 const getUserResponse = (user) => ({
   id: user._id,
@@ -92,12 +84,9 @@ const getUserResponse = (user) => ({
   college: user.college,
   branch: user.branch,
   semester: user.semester,
-  profileCompleted:
-    user.profileCompleted,
-  authProvider:
-    user.authProvider,
+  profileCompleted: user.profileCompleted,
+  authProvider: user.authProvider,
 });
-
 // ==========================================
 // CHECK USERNAME
 // ==========================================
@@ -580,33 +569,23 @@ router.get(
 router.post(
   "/logout",
   (req, res) => {
-    const isHttps =
-      req.secure === true ||
-      req.headers["x-forwarded-proto"] ===
-        "https";
+    const isProduction =
+      process.env.NODE_ENV === "production";
 
-    res.clearCookie(
-      "token",
-      {
-        httpOnly: true,
-
-        secure: isHttps,
-
-        sameSite: isHttps
-          ? "none"
-          : "lax",
-
-        path: "/",
-      }
-    );
+    res.clearCookie("token", {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction
+        ? "none"
+        : "lax",
+      path: "/",
+    });
 
     return res.json({
-      message:
-        "Logged out successfully.",
+      message: "Logged out successfully.",
     });
   }
 );
-
 // ==========================================
 // UPDATE PROFILE
 // ==========================================
