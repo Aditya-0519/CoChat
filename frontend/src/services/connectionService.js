@@ -12,9 +12,7 @@ async function request(path, options = {}) {
     ...options,
   });
 
-  const data = await response
-    .json()
-    .catch(() => ({}));
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
@@ -26,125 +24,105 @@ async function request(path, options = {}) {
   return data;
 }
 
-export const createConversation = (userId) =>
-  request("/conversations", {
-    method: "POST",
-    body: JSON.stringify({
-      userId,
-    }),
-  });
+/*
+|--------------------------------------------------------------------------
+| CONNECTIONS
+|--------------------------------------------------------------------------
+*/
+
+export const getConnections = () =>
+  request("/connections");
+
+export const getConnectionStatus = (userId) => {
+  if (!userId) {
+    throw new Error("User ID is required.");
+  }
+
+  return request(
+    `/connections/status/${userId}`
+  );
+};
+
+export const sendConnectionRequest = (userId) => {
+  if (!userId) {
+    throw new Error("User ID is required.");
+  }
+
+  return request(
+    `/connections/request/${userId}`,
+    {
+      method: "POST",
+    }
+  );
+};
 
 /*
 |--------------------------------------------------------------------------
-| CONVERSATION LIST
+| CONNECTION REQUESTS
+|--------------------------------------------------------------------------
+*/
+
+export const getConnectionRequests = () =>
+  request("/connections/requests");
+
+export const getSentConnectionRequests = () =>
+  request("/connections/requests/sent");
+
+export const getConnectionRequestCount = () =>
+  request("/connections/requests/count");
+
+export const acceptConnectionRequest = (
+  connectionId
+) => {
+  if (!connectionId) {
+    throw new Error(
+      "Connection ID is required."
+    );
+  }
+
+  return request(
+    `/connections/${connectionId}/accept`,
+    {
+      method: "PATCH",
+    }
+  );
+};
+
+export const rejectConnectionRequest = (
+  connectionId
+) => {
+  if (!connectionId) {
+    throw new Error(
+      "Connection ID is required."
+    );
+  }
+
+  return request(
+    `/connections/${connectionId}/reject`,
+    {
+      method: "PATCH",
+    }
+  );
+};
+
+/*
+|--------------------------------------------------------------------------
+| LEGACY / CONVERSATION-COMPATIBLE ALIASES
 |--------------------------------------------------------------------------
 |
-| The existing conversation endpoint remains the source of
-| conversation data.
-|
-| We additionally request unread counts and merge them into
-| each conversation so the UI receives:
-|
-| conversation.unreadCount
+| Keep these aliases so older components or future code using
+| the previous naming convention continue to work.
 |
 */
 
-export const getConversations = async () => {
-  const [
-    conversationData,
-    unreadData,
-  ] = await Promise.all([
-    request("/conversations"),
-    request("/conversation-state/unread"),
-  ]);
+export const getMessageRequests =
+  getConnectionRequests;
 
-  const conversations =
-    Array.isArray(
-      conversationData?.conversations
-    )
-      ? conversationData.conversations
-      : [];
+export const getSentMessageRequests =
+  getSentConnectionRequests;
 
-  const unread =
-    unreadData?.unread || {};
+export const acceptMessageRequest =
+  acceptConnectionRequest;
 
-  const mergedConversations =
-    conversations.map(
-      (conversation) => {
-        const conversationId =
-          conversation?._id?.toString();
-
-        return {
-          ...conversation,
-
-          unreadCount:
-            conversationId &&
-            Number.isFinite(
-              unread[conversationId]
-            )
-              ? unread[conversationId]
-              : 0,
-        };
-      }
-    );
-
-  return {
-    ...conversationData,
-    conversations:
-      mergedConversations,
-
-    totalUnread:
-      Number.isFinite(
-        unreadData?.totalUnread
-      )
-        ? unreadData.totalUnread
-        : 0,
-  };
-};
-
-export const getConversation = (
-  conversationId
-) =>
-  request(
-    `/conversations/${conversationId}`
-  );
-
-export const sendMessageRequest = (
-  userId,
-  text
-) =>
-  request("/conversations/requests", {
-    method: "POST",
-    body: JSON.stringify({
-      userId,
-      text,
-    }),
-  });
-
-export const getMessageRequests = () =>
-  request("/conversations/requests");
-
-export const getSentMessageRequests = () =>
-  request(
-    "/conversations/requests/sent"
-  );
-
-export const acceptMessageRequest = (
-  requestId
-) =>
-  request(
-    `/conversations/requests/${requestId}/accept`,
-    {
-      method: "PATCH",
-    }
-  );
-
-export const declineMessageRequest = (
-  requestId
-) =>
-  request(
-    `/conversations/requests/${requestId}/decline`,
-    {
-      method: "PATCH",
-    }
-  );
+export const declineMessageRequest =
+  rejectConnectionRequest;
