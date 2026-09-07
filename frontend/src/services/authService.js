@@ -1,5 +1,6 @@
-const API_URL = "http://localhost:5000/api";
+import { API_BASE_URL } from "./apiConfig";
 
+const API_URL = `${API_BASE_URL}`;
 export const signupUser = async (userData) => {
   const response = await fetch(`${API_URL}/auth/signup`, {
     method: "POST",
@@ -114,6 +115,31 @@ export const updateProfile = async (profileData) => {
   if (!response.ok) {
     throw new Error(
       data.message || "Unable to update profile."
+    );
+  }
+
+  return data;
+};
+
+export const uploadAvatar = async (file) => {
+  const formData = new FormData();
+
+  formData.append("avatar", file);
+
+  const response = await fetch(
+    `${API_URL}/auth/profile/avatar`,
+    {
+      method: "POST",
+      credentials: "include",
+      body: formData,
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      data.message || "Unable to upload avatar."
     );
   }
 

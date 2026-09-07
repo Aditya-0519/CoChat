@@ -1,12 +1,18 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+
 const User = require("../models/User");
 const protect = require("../middleware/authMiddleware");
+const uploadAvatar = require("../middleware/avatarUpload");
+
 const router = express.Router();
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
 
+/*
+  GET /api/auth/check-username/:username
+*/
 router.get("/check-username/:username", async (req, res) => {
   try {
     const username = req.params.username.toLowerCase().trim();
@@ -37,20 +43,23 @@ router.get("/check-username/:username", async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       available: true,
       message: "Username available.",
     });
   } catch (error) {
     console.error("Username check failed:", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       available: false,
       message: "Unable to check username right now.",
     });
   }
 });
 
+/*
+  POST /api/auth/signup
+*/
 router.post("/signup", async (req, res) => {
   try {
     const { username, email, password } = req.body;
@@ -65,7 +74,6 @@ router.post("/signup", async (req, res) => {
     const normalizedUsername = username.toLowerCase().trim();
     const normalizedEmail = email.toLowerCase().trim();
 
-    // Username validation
     if (
       normalizedUsername.length < 3 ||
       normalizedUsername.length > 30
@@ -84,7 +92,6 @@ router.post("/signup", async (req, res) => {
       });
     }
 
-    // Password validation
     if (password.length < 6) {
       return res.status(400).json({
         success: false,
@@ -92,7 +99,6 @@ router.post("/signup", async (req, res) => {
       });
     }
 
-    // Check username
     const existingUsername = await User.findOne({
       username: normalizedUsername,
     });
@@ -104,7 +110,6 @@ router.post("/signup", async (req, res) => {
       });
     }
 
-    // Check email
     const existingEmail = await User.findOne({
       email: normalizedEmail,
     });
@@ -116,14 +121,6 @@ router.post("/signup", async (req, res) => {
       });
     }
 
-    /*
-     * bcrypt automatically:
-     * 1. Generates a random salt
-     * 2. Combines it with the password
-     * 3. Hashes the result
-     *
-     * The salt is stored inside the bcrypt hash.
-     */
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await User.create({
@@ -133,34 +130,45 @@ router.post("/signup", async (req, res) => {
     });
 
     const token = jwt.sign(
-  { userId: user._id.toString() },
-  process.env.JWT_SECRET,
-  { expiresIn: "7d" }
-);
+      {
+        userId: user._id.toString(),
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "7d",
+      }
+    );
 
-res.cookie("token", token, {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite:
-    process.env.NODE_ENV === "production" ? "none" : "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-});
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite:
+        process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Account created successfully.",
       user: {
         id: user._id,
         username: user.username,
         email: user.email,
+        bio: user.bio,
+        avatar: user.avatar,
+        interests: user.interests,
+        college: user.college,
+        branch: user.branch,
+        semester: user.semester,
+        profileCompleted: user.profileCompleted,
       },
     });
   } catch (error) {
     console.error("Signup failed:", error.message);
 
-    // Handle MongoDB duplicate-key race conditions
     if (error.code === 11000) {
-      const duplicateField = Object.keys(error.keyPattern || {})[0];
+      const duplicateField =
+        Object.keys(error.keyPattern || {})[0];
 
       if (duplicateField === "username") {
         return res.status(409).json({
@@ -177,13 +185,16 @@ res.cookie("token", token, {
       }
     }
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Unable to create account right now.",
     });
   }
 });
 
+/*
+  POST /api/auth/login
+*/
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -214,62 +225,68 @@ router.post("/login", async (req, res) => {
     );
 
     if (!passwordMatches) {
-  return res.status(401).json({
-    success: false,
-    message: "Invalid email or password.",
-  });
-}
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password.",
+      });
+    }
 
-const token = jwt.sign(
-  {
-    userId: user._id.toString(),
-  },
-  process.env.JWT_SECRET,
-  {
-    expiresIn: "7d",
-  }
-);
+    const token = jwt.sign(
+      {
+        userId: user._id.toString(),
+      },
+      process.env.JWT_SECRET,
+      {
+        expiresIn: "7d",
+      }
+    );
 
-res.cookie("token", token, {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-});
+    res.cookie("token", token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite:
+        process.env.NODE_ENV === "production" ? "none" : "lax",
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
 
-res.json({
-  success: true,
-  message: "Login successful.",
- user: {
-  id: user._id,
-  username: user.username,
-  email: user.email,
-  bio: user.bio,
-  interests: user.interests,
-  college: user.college,
-  branch: user.branch,
-  semester: user.semester,
-  profileCompleted: user.profileCompleted,
-}
-});
+    return res.json({
+      success: true,
+      message: "Login successful.",
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        bio: user.bio,
+        avatar: user.avatar,
+        interests: user.interests,
+        college: user.college,
+        branch: user.branch,
+        semester: user.semester,
+        profileCompleted: user.profileCompleted,
+      },
+    });
   } catch (error) {
     console.error("Login failed:", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Unable to login right now.",
     });
   }
 });
 
+/*
+  GET /api/auth/me
+*/
 router.get("/me", protect, async (req, res) => {
-  res.json({
+  return res.json({
     success: true,
     user: {
       id: req.user._id,
       username: req.user.username,
       email: req.user.email,
       bio: req.user.bio,
+      avatar: req.user.avatar,
       interests: req.user.interests,
       college: req.user.college,
       branch: req.user.branch,
@@ -279,22 +296,26 @@ router.get("/me", protect, async (req, res) => {
   });
 });
 
+/*
+  POST /api/auth/logout
+*/
 router.post("/logout", (req, res) => {
   res.clearCookie("token", {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite:
-      process.env.NODE_ENV === "production"
-        ? "none"
-        : "lax",
+      process.env.NODE_ENV === "production" ? "none" : "lax",
   });
 
-  res.json({
+  return res.json({
     success: true,
     message: "Logged out successfully.",
   });
 });
 
+/*
+  PUT /api/auth/profile
+*/
 router.put("/profile", protect, async (req, res) => {
   try {
     const {
@@ -319,7 +340,7 @@ router.put("/profile", protect, async (req, res) => {
       });
     }
 
-    if (bio && bio.length > 160) {
+    if (typeof bio === "string" && bio.length > 160) {
       return res.status(400).json({
         success: false,
         message: "Bio cannot exceed 160 characters.",
@@ -329,10 +350,12 @@ router.put("/profile", protect, async (req, res) => {
     const updatedUser = await User.findByIdAndUpdate(
       req.user._id,
       {
-        bio: bio?.trim() || "",
+        bio: typeof bio === "string" ? bio.trim() : "",
         interests,
-        college: college?.trim() || "",
-        branch: branch?.trim() || "",
+        college:
+          typeof college === "string" ? college.trim() : "",
+        branch:
+          typeof branch === "string" ? branch.trim() : "",
         semester: semester || null,
         profileCompleted: true,
       },
@@ -349,7 +372,7 @@ router.put("/profile", protect, async (req, res) => {
       });
     }
 
-    res.json({
+    return res.json({
       success: true,
       message: "Profile updated successfully.",
       user: {
@@ -357,6 +380,7 @@ router.put("/profile", protect, async (req, res) => {
         username: updatedUser.username,
         email: updatedUser.email,
         bio: updatedUser.bio,
+        avatar: updatedUser.avatar,
         interests: updatedUser.interests,
         college: updatedUser.college,
         branch: updatedUser.branch,
@@ -367,11 +391,75 @@ router.put("/profile", protect, async (req, res) => {
   } catch (error) {
     console.error("Profile update failed:", error.message);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Unable to update profile right now.",
     });
   }
 });
+
+/*
+  POST /api/auth/profile/avatar
+
+  Uploads the user's avatar to Cloudinary.
+*/
+router.post(
+  "/profile/avatar",
+  protect,
+  uploadAvatar.single("avatar"),
+  async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message: "Please select an image.",
+        });
+      }
+
+      const updatedUser = await User.findByIdAndUpdate(
+        req.user._id,
+        {
+          avatar: req.file.path,
+        },
+        {
+          new: true,
+          runValidators: true,
+        }
+      ).select("-password");
+
+      if (!updatedUser) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found.",
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Avatar updated successfully.",
+        user: {
+          id: updatedUser._id,
+          username: updatedUser.username,
+          email: updatedUser.email,
+          bio: updatedUser.bio,
+          avatar: updatedUser.avatar,
+          interests: updatedUser.interests,
+          college: updatedUser.college,
+          branch: updatedUser.branch,
+          semester: updatedUser.semester,
+          profileCompleted: updatedUser.profileCompleted,
+        },
+      });
+    } catch (error) {
+      console.error("Avatar upload failed:", error);
+
+      return res.status(500).json({
+        success: false,
+        message:
+          error.message || "Unable to upload avatar right now.",
+      });
+    }
+  }
+);
 
 module.exports = router;

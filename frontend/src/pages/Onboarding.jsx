@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import { useNavigate } from "react-router-dom";
-
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 const INTERESTS = [
   "Coding",

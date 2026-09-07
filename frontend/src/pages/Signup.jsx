@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 import { checkUsername } from "../services/authService";
 
 import AuthLayout from "../components/AuthLayout";
@@ -48,45 +48,65 @@ function Signup() {
     }
   };
 
-  useEffect(() => {
-    const username = formData.username.trim();
+useEffect(() => {
+  const username =
+    formData.username.trim();
 
-    if (!username) {
-      setUsernameStatus("idle");
-      setUsernameMessage("");
-      return;
-    }
+  const timer = setTimeout(
+    async () => {
+      if (!username) {
+        setUsernameStatus("idle");
+        setUsernameMessage("");
+        return;
+      }
 
-    if (username.length < 3) {
-      setUsernameStatus("invalid");
-      setUsernameMessage(
-        "Username must be at least 3 characters."
-      );
-      return;
-    }
+      if (username.length < 3) {
+        setUsernameStatus("invalid");
+        setUsernameMessage(
+          "Username must be at least 3 characters."
+        );
+        return;
+      }
 
-    const timer = setTimeout(async () => {
       try {
         setUsernameStatus("checking");
 
-        const data = await checkUsername(username);
+        const data =
+          await checkUsername(
+            username
+          );
 
         if (data.available) {
-          setUsernameStatus("available");
-          setUsernameMessage("Username is available.");
+          setUsernameStatus(
+            "available"
+          );
+
+          setUsernameMessage(
+            "Username is available."
+          );
         } else {
           setUsernameStatus("taken");
-          setUsernameMessage(data.message);
+
+          setUsernameMessage(
+            data.message ||
+              "Username is already taken."
+          );
         }
-      } catch (error) {
+      } catch {
         setUsernameStatus("error");
-        setUsernameMessage("Unable to check username.");
+
+        setUsernameMessage(
+          "Unable to check username."
+        );
       }
-    }, 500);
+    },
+    username ? 500 : 0
+  );
 
-    return () => clearTimeout(timer);
-  }, [formData.username]);
-
+  return () => {
+    clearTimeout(timer);
+  };
+}, [formData.username]);
   const handleSubmit = async (e) => {
     e.preventDefault();
 

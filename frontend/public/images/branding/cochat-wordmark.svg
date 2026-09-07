@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 200">
+  <defs>
+    <linearGradient id="g" x1="20%" y1="10%" x2="85%" y2="90%">
+      <stop offset="0%" stop-color="#4F46E5"/>
+      <stop offset="55%" stop-color="#7C3AED"/>
+      <stop offset="100%" stop-color="#A855F7"/>
+    </linearGradient>
+  </defs>
+  <rect x="12" y="12" width="176" height="176" rx="44" fill="url(#g)"/>
+  <path d="M132 67c-12-14-31-20-52-17-23 4-41 22-45 45-4 25 9 47 29 58l-4 20c0 3 3 5 6 4l21-12c6 2 13 2 19 2 25-2 45-18 51-40 5-21-3-45-25-60z" fill="#fff"/>
+  <path d="M132 80c-9-14-26-21-43-18-17 3-30 15-33 32-3 18 5 34 20 42l-3 12 13-7c16 4 32-1 42-13 10-13 12-32 4-48z" fill="url(#g)"/>
+  <circle cx="88" cy="105" r="5" fill="#fff"/><circle cx="106" cy="105" r="5" fill="#fff"/><circle cx="124" cy="105" r="5" fill="#fff"/>
+  <text x="220" y="126" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="86" font-weight="800" fill="#0B2340">Co</text>
+  <text x="340" y="126" font-family="Inter,Segoe UI,Arial,sans-serif" font-size="86" font-weight="800" fill="url(#g)">Chat</text>
+</svg>

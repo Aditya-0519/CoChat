@@ -12,12 +12,17 @@
   "description": "",
   "dependencies": {
     "bcrypt": "^6.0.0",
+    "cloudinary": "^1.41.3",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
-    "mongoose": "^9.9.5"
+    "mongoose": "^9.9.5",
+    "multer": "^2.3.0",
+    "multer-storage-cloudinary": "^4.0.0",
+    "socket.io": "^4.8.3",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "nodemon": "^3.1.14"

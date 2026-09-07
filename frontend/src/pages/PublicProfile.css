@@ -1,0 +1,56 @@
+.public-profile-message-sent {
+  width: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-top: 4px;
+  padding: 14px 16px;
+  border: 1px solid rgba(99, 102, 241, 0.14);
+  border-radius: 16px;
+  background: linear-gradient(
+    135deg,
+    rgba(238, 242, 255, 0.9),
+    rgba(250, 245, 255, 0.9)
+  );
+}
+
+.public-profile-message-sent-icon {
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 10px;
+  background: rgba(99, 102, 241, 0.1);
+  color: #6366f1;
+}
+
+.public-profile-message-sent > div:last-child {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.public-profile-message-sent strong {
+  font-size: 13px;
+  font-weight: 800;
+  color: #3730a3;
+}
+
+.public-profile-message-sent span {
+  display: block;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #4b5563;
+  overflow-wrap: anywhere;
+}
+
+.public-profile-message-sent small {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #8b5cf6;
+  font-weight: 600;
+}

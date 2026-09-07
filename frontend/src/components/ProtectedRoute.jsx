@@ -1,26 +1,43 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 
-import { useAuth } from "../context/AuthContext";
+import { useAuth } from "../context/useAuth";
 
 function ProtectedRoute() {
-  const { user, isAuthenticated, loading } = useAuth();
+  const {
+    user,
+    loading,
+    isAuthenticated,
+  } = useAuth();
+
   const location = useLocation();
 
+  // Wait until authentication is checked
   if (loading) {
     return (
       <div className="auth-loading">
-        <div className="auth-loading-spinner"></div>
+
+        <div className="auth-loading-spinner" />
+
         <p>Loading CoChat...</p>
+
       </div>
     );
   }
 
-  // User is not logged in
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
+  // Not logged in
+  if (!isAuthenticated || !user) {
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={{
+          from: location.pathname,
+        }}
+      />
+    );
   }
 
-  // User has not completed their profile
+  // Logged in but profile is incomplete
   if (
     !user.profileCompleted &&
     location.pathname !== "/onboarding"
@@ -28,7 +45,8 @@ function ProtectedRoute() {
     return <Navigate to="/onboarding" replace />;
   }
 
-  // User has already completed their profile
+  // Profile already completed
+  // Don't allow completed users to go back to onboarding
   if (
     user.profileCompleted &&
     location.pathname === "/onboarding"

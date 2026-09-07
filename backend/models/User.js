@@ -32,6 +32,11 @@ const userSchema = new mongoose.Schema(
       default: "",
     },
 
+    avatar: {
+      type: String,
+      default: "",
+    },
+
     interests: {
       type: [String],
       default: [],
