@@ -19,20 +19,6 @@ const googleClient = new OAuth2Client(
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
 
-/*
- * Cookie policy is derived from whether FRONTEND_URL is https, NOT from
- * NODE_ENV. Frontend (Vercel) and backend (Render) live on different
- * domains, so this is a cross-site deployment regardless of NODE_ENV.
- * Cross-site cookies require SameSite=None; Secure, or browsers will
- * silently refuse to send them back on fetch requests (only Lax cookies
- * survive top-level navigations, not XHR/fetch). Relying on NODE_ENV was
- * the bug: if it isn't set on the host, the cookie quietly downgrades to
- * SameSite=Lax and gets dropped on every cross-site request, so the user
- * is "logged in" only until the page is refreshed.
- */
-const isCrossSiteDeployment =
-  (process.env.FRONTEND_URL || "").trim().startsWith("https://");
-
 const createToken = (userId) => {
   return jwt.sign(
     { userId },
@@ -43,14 +29,58 @@ const createToken = (userId) => {
   );
 };
 
-const setTokenCookie = (res, token) => {
+/*
+|--------------------------------------------------------------------------
+| AUTH COOKIE
+|--------------------------------------------------------------------------
+|
+| Production:
+|   Vercel frontend
+|        ↓
+|   Render backend
+|
+| Because frontend and backend are on different sites,
+| the production cookie needs:
+|
+|   SameSite=None
+|   Secure=true
+|
+| Render is behind a proxy, so we use both req.secure
+| and x-forwarded-proto to reliably detect HTTPS.
+|
+*/
+
+const setTokenCookie = (
+  req,
+  res,
+  token
+) => {
+  const isHttps =
+    req.secure === true ||
+    req.headers["x-forwarded-proto"] ===
+      "https";
+
   res.cookie("token", token, {
     httpOnly: true,
-    secure: isCrossSiteDeployment,
-    sameSite: isCrossSiteDeployment ? "none" : "lax",
-    maxAge: 7 * 24 * 60 * 60 * 1000,
+
+    secure: isHttps,
+
+    sameSite: isHttps
+      ? "none"
+      : "lax",
+
+    path: "/",
+
+    maxAge:
+      7 * 24 * 60 * 60 * 1000,
   });
 };
+
+/*
+|--------------------------------------------------------------------------
+| USER RESPONSE
+|--------------------------------------------------------------------------
+*/
 
 const getUserResponse = (user) => ({
   id: user._id,
@@ -62,8 +92,10 @@ const getUserResponse = (user) => ({
   college: user.college,
   branch: user.branch,
   semester: user.semester,
-  profileCompleted: user.profileCompleted,
-  authProvider: user.authProvider,
+  profileCompleted:
+    user.profileCompleted,
+  authProvider:
+    user.authProvider,
 });
 
 // ==========================================
@@ -74,19 +106,22 @@ router.get(
   "/check-username/:username",
   async (req, res) => {
     try {
-      const username = req.params.username
-        .trim()
-        .toLowerCase();
+      const username =
+        req.params.username
+          .trim()
+          .toLowerCase();
 
       if (!username) {
         return res.status(400).json({
-          message: "Username is required.",
+          message:
+            "Username is required.",
         });
       }
 
-      const exists = await User.exists({
-        username,
-      });
+      const exists =
+        await User.exists({
+          username,
+        });
 
       return res.json({
         available: !exists,
@@ -98,7 +133,8 @@ router.get(
       );
 
       return res.status(500).json({
-        message: "Unable to check username.",
+        message:
+          "Unable to check username.",
       });
     }
   }
@@ -108,175 +144,226 @@ router.get(
 // SIGNUP
 // ==========================================
 
-router.post("/signup", async (req, res) => {
-  try {
-    const {
-      username,
-      email,
-      password,
-    } = req.body;
+router.post(
+  "/signup",
+  async (req, res) => {
+    try {
+      const {
+        username,
+        email,
+        password,
+      } = req.body;
 
-    if (!username || !email || !password) {
-      return res.status(400).json({
+      if (
+        !username ||
+        !email ||
+        !password
+      ) {
+        return res.status(400).json({
+          message:
+            "Username, email and password are required.",
+        });
+      }
+
+      const cleanUsername =
+        username.trim();
+
+      const cleanEmail =
+        email.trim().toLowerCase();
+
+      if (
+        !USERNAME_REGEX.test(
+          cleanUsername
+        )
+      ) {
+        return res.status(400).json({
+          message:
+            "Username can only contain letters, numbers and underscores.",
+        });
+      }
+
+      if (
+        cleanUsername.length < 3
+      ) {
+        return res.status(400).json({
+          message:
+            "Username must be at least 3 characters.",
+        });
+      }
+
+      if (
+        cleanUsername.length > 30
+      ) {
+        return res.status(400).json({
+          message:
+            "Username cannot exceed 30 characters.",
+        });
+      }
+
+      if (password.length < 6) {
+        return res.status(400).json({
+          message:
+            "Password must be at least 6 characters.",
+        });
+      }
+
+      const existingEmail =
+        await User.findOne({
+          email: cleanEmail,
+        });
+
+      if (existingEmail) {
+        return res.status(409).json({
+          message:
+            "An account with this email already exists.",
+        });
+      }
+
+      const existingUsername =
+        await User.findOne({
+          username: cleanUsername,
+        });
+
+      if (existingUsername) {
+        return res.status(409).json({
+          message:
+            "Username is already taken.",
+        });
+      }
+
+      const hashedPassword =
+        await bcrypt.hash(
+          password,
+          12
+        );
+
+      const user =
+        await User.create({
+          username:
+            cleanUsername,
+          email: cleanEmail,
+          password:
+            hashedPassword,
+          authProvider: "local",
+          profileCompleted:
+            false,
+        });
+
+      const token =
+        createToken(user._id);
+
+      setTokenCookie(
+        req,
+        res,
+        token
+      );
+
+      return res.status(201).json({
         message:
-          "Username, email and password are required.",
+          "Account created successfully.",
+        user:
+          getUserResponse(user),
+      });
+    } catch (error) {
+      console.error(
+        "Signup error:",
+        error
+      );
+
+      return res.status(500).json({
+        message:
+          "Unable to create account.",
       });
     }
-
-    const cleanUsername = username.trim();
-    const cleanEmail = email.trim().toLowerCase();
-
-    if (
-      !USERNAME_REGEX.test(cleanUsername)
-    ) {
-      return res.status(400).json({
-        message:
-          "Username can only contain letters, numbers and underscores.",
-      });
-    }
-
-    if (cleanUsername.length < 3) {
-      return res.status(400).json({
-        message:
-          "Username must be at least 3 characters.",
-      });
-    }
-
-    if (cleanUsername.length > 30) {
-      return res.status(400).json({
-        message:
-          "Username cannot exceed 30 characters.",
-      });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({
-        message:
-          "Password must be at least 6 characters.",
-      });
-    }
-
-    const existingEmail = await User.findOne({
-      email: cleanEmail,
-    });
-
-    if (existingEmail) {
-      return res.status(409).json({
-        message:
-          "An account with this email already exists.",
-      });
-    }
-
-    const existingUsername =
-      await User.findOne({
-        username: cleanUsername,
-      });
-
-    if (existingUsername) {
-      return res.status(409).json({
-        message:
-          "Username is already taken.",
-      });
-    }
-
-    const hashedPassword =
-      await bcrypt.hash(password, 12);
-
-    const user = await User.create({
-      username: cleanUsername,
-      email: cleanEmail,
-      password: hashedPassword,
-      authProvider: "local",
-      profileCompleted: false,
-    });
-
-    const token = createToken(user._id);
-
-    setTokenCookie(res, token);
-
-    return res.status(201).json({
-      message: "Account created successfully.",
-      user: getUserResponse(user),
-    });
-  } catch (error) {
-    console.error("Signup error:", error);
-
-    return res.status(500).json({
-      message: "Unable to create account.",
-    });
   }
-});
+);
 
 // ==========================================
 // LOGIN
 // ==========================================
 
-router.post("/login", async (req, res) => {
-  try {
-    const {
-      email,
-      password,
-    } = req.body;
-
-    if (!email || !password) {
-      return res.status(400).json({
-        message:
-          "Email and password are required.",
-      });
-    }
-
-    const cleanEmail = email
-      .trim()
-      .toLowerCase();
-
-    const user = await User.findOne({
-      email: cleanEmail,
-    });
-
-    if (!user) {
-      return res.status(401).json({
-        message:
-          "Invalid email or password.",
-      });
-    }
-
-    // Google-only account
-    if (!user.password) {
-      return res.status(400).json({
-        message:
-          "This account uses Google login. Please continue with Google.",
-      });
-    }
-
-    const passwordMatches =
-      await bcrypt.compare(
+router.post(
+  "/login",
+  async (req, res) => {
+    try {
+      const {
+        email,
         password,
-        user.password
+      } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({
+          message:
+            "Email and password are required.",
+        });
+      }
+
+      const cleanEmail =
+        email
+          .trim()
+          .toLowerCase();
+
+      const user =
+        await User.findOne({
+          email: cleanEmail,
+        });
+
+      if (!user) {
+        return res.status(401).json({
+          message:
+            "Invalid email or password.",
+        });
+      }
+
+      // Google-only account
+      if (!user.password) {
+        return res.status(400).json({
+          message:
+            "This account uses Google login. Please continue with Google.",
+        });
+      }
+
+      const passwordMatches =
+        await bcrypt.compare(
+          password,
+          user.password
+        );
+
+      if (!passwordMatches) {
+        return res.status(401).json({
+          message:
+            "Invalid email or password.",
+        });
+      }
+
+      const token =
+        createToken(user._id);
+
+      setTokenCookie(
+        req,
+        res,
+        token
       );
 
-    if (!passwordMatches) {
-      return res.status(401).json({
+      return res.json({
         message:
-          "Invalid email or password.",
+          "Login successful.",
+        user:
+          getUserResponse(user),
+      });
+    } catch (error) {
+      console.error(
+        "Login error:",
+        error
+      );
+
+      return res.status(500).json({
+        message:
+          "Unable to log in.",
       });
     }
-
-    const token = createToken(user._id);
-
-    setTokenCookie(res, token);
-
-    return res.json({
-      message: "Login successful.",
-      user: getUserResponse(user),
-    });
-  } catch (error) {
-    console.error("Login error:", error);
-
-    return res.status(500).json({
-      message: "Unable to log in.",
-    });
   }
-});
+);
 
 // ==========================================
 // GOOGLE LOGIN
@@ -286,7 +373,8 @@ router.post(
   "/google",
   async (req, res) => {
     try {
-      const { credential } = req.body;
+      const { credential } =
+        req.body;
 
       if (!credential) {
         return res.status(400).json({
@@ -295,7 +383,10 @@ router.post(
         });
       }
 
-      if (!process.env.GOOGLE_CLIENT_ID) {
+      if (
+        !process.env
+          .GOOGLE_CLIENT_ID
+      ) {
         console.error(
           "GOOGLE_CLIENT_ID is not configured."
         );
@@ -306,13 +397,15 @@ router.post(
         });
       }
 
-      // Verify Google ID token
       const ticket =
-        await googleClient.verifyIdToken({
-          idToken: credential,
-          audience:
-            process.env.GOOGLE_CLIENT_ID,
-        });
+        await googleClient.verifyIdToken(
+          {
+            idToken: credential,
+            audience:
+              process.env
+                .GOOGLE_CLIENT_ID,
+          }
+        );
 
       const payload =
         ticket.getPayload();
@@ -327,12 +420,16 @@ router.post(
       const {
         sub: googleId,
         email,
-        email_verified: emailVerified,
+        email_verified:
+          emailVerified,
         name,
         picture,
       } = payload;
 
-      if (!email || !emailVerified) {
+      if (
+        !email ||
+        !emailVerified
+      ) {
         return res.status(401).json({
           message:
             "Your Google email could not be verified.",
@@ -340,25 +437,20 @@ router.post(
       }
 
       const cleanEmail =
-        email.trim().toLowerCase();
+        email
+          .trim()
+          .toLowerCase();
 
-      // ==========================================
-      // FIND EXISTING GOOGLE ACCOUNT
-      // ==========================================
-
-      let user = await User.findOne({
-        googleId,
-      });
-
-      // ==========================================
-      // IF GOOGLE ACCOUNT DOESN'T EXIST,
-      // CHECK WHETHER EMAIL ALREADY EXISTS
-      // ==========================================
+      let user =
+        await User.findOne({
+          googleId,
+        });
 
       if (!user) {
         const existingUser =
           await User.findOne({
-            email: cleanEmail,
+            email:
+              cleanEmail,
           });
 
         if (existingUser) {
@@ -368,59 +460,75 @@ router.post(
           });
         }
 
-        // ==========================================
-        // GENERATE UNIQUE USERNAME
-        // ==========================================
-
         let baseUsername =
-          (name || "user")
-            .replace(/[^a-zA-Z0-9]/g, "")
+          (
+            name ||
+            "user"
+          )
+            .replace(
+              /[^a-zA-Z0-9]/g,
+              ""
+            )
             .toLowerCase();
 
-        if (baseUsername.length < 3) {
-          baseUsername = "user";
+        if (
+          baseUsername.length < 3
+        ) {
+          baseUsername =
+            "user";
         }
 
         baseUsername =
-          baseUsername.substring(0, 25);
+          baseUsername.substring(
+            0,
+            25
+          );
 
-        let username = baseUsername;
+        let username =
+          baseUsername;
+
         let counter = 1;
 
         while (
-          await User.exists({ username })
+          await User.exists({
+            username,
+          })
         ) {
           username =
             `${baseUsername}${counter}`;
+
           counter++;
         }
 
-        // ==========================================
-        // CREATE GOOGLE USER
-        // ==========================================
-
-        user = await User.create({
-          username,
-          email: cleanEmail,
-          googleId,
-          authProvider: "google",
-          avatar: picture || "",
-          profileCompleted: false,
-        });
+        user =
+          await User.create({
+            username,
+            email:
+              cleanEmail,
+            googleId,
+            authProvider:
+              "google",
+            avatar:
+              picture || "",
+            profileCompleted:
+              false,
+          });
       }
 
-      // ==========================================
-      // CREATE COCHAT JWT
-      // ==========================================
+      const token =
+        createToken(user._id);
 
-      const token = createToken(user._id);
-
-      setTokenCookie(res, token);
+      setTokenCookie(
+        req,
+        res,
+        token
+      );
 
       return res.json({
         message:
           "Google login successful.",
-        user: getUserResponse(user),
+        user:
+          getUserResponse(user),
       });
     } catch (error) {
       console.error(
@@ -446,9 +554,10 @@ router.get(
   async (req, res) => {
     try {
       return res.json({
-        user: getUserResponse(
-          req.user
-        ),
+        user:
+          getUserResponse(
+            req.user
+          ),
       });
     } catch (error) {
       console.error(
@@ -471,13 +580,25 @@ router.get(
 router.post(
   "/logout",
   (req, res) => {
-    res.clearCookie("token", {
-      httpOnly: true,
-      secure: isCrossSiteDeployment,
-      sameSite: isCrossSiteDeployment
-        ? "none"
-        : "lax",
-    });
+    const isHttps =
+      req.secure === true ||
+      req.headers["x-forwarded-proto"] ===
+        "https";
+
+    res.clearCookie(
+      "token",
+      {
+        httpOnly: true,
+
+        secure: isHttps,
+
+        sameSite: isHttps
+          ? "none"
+          : "lax",
+
+        path: "/",
+      }
+    );
 
     return res.json({
       message:
@@ -503,13 +624,15 @@ router.put(
         semester,
       } = req.body;
 
-      const user = await User.findById(
-        req.user._id
-      );
+      const user =
+        await User.findById(
+          req.user._id
+        );
 
       if (!user) {
         return res.status(404).json({
-          message: "User not found.",
+          message:
+            "User not found.",
         });
       }
 
@@ -517,37 +640,45 @@ router.put(
         user.bio = bio;
       }
 
-      if (interests !== undefined) {
-        user.interests = interests;
+      if (
+        interests !== undefined
+      ) {
+        user.interests =
+          interests;
       }
 
       if (college !== undefined) {
-        user.college = college;
+        user.college =
+          college;
       }
 
       if (branch !== undefined) {
-        user.branch = branch;
+        user.branch =
+          branch;
       }
 
-      if (semester !== undefined) {
-        user.semester = semester;
+      if (
+        semester !== undefined
+      ) {
+        user.semester =
+          semester;
       }
 
-      // Mark profile complete when
-      // onboarding information exists.
-      user.profileCompleted = Boolean(
-        user.college &&
-        user.branch &&
-        user.semester &&
-        user.interests?.length
-      );
+      user.profileCompleted =
+        Boolean(
+          user.college &&
+            user.branch &&
+            user.semester &&
+            user.interests?.length
+        );
 
       await user.save();
 
       return res.json({
         message:
           "Profile updated successfully.",
-        user: getUserResponse(user),
+        user:
+          getUserResponse(user),
       });
     } catch (error) {
       console.error(
@@ -570,7 +701,9 @@ router.put(
 router.post(
   "/profile/avatar",
   protect,
-  uploadAvatar.single("avatar"),
+  uploadAvatar.single(
+    "avatar"
+  ),
   async (req, res) => {
     try {
       if (!req.file) {
@@ -580,13 +713,15 @@ router.post(
         });
       }
 
-      const user = await User.findById(
-        req.user._id
-      );
+      const user =
+        await User.findById(
+          req.user._id
+        );
 
       if (!user) {
         return res.status(404).json({
-          message: "User not found.",
+          message:
+            "User not found.",
         });
       }
 
@@ -600,7 +735,8 @@ router.post(
       return res.json({
         message:
           "Avatar updated successfully.",
-        user: getUserResponse(user),
+        user:
+          getUserResponse(user),
       });
     } catch (error) {
       console.error(
