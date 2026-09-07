@@ -4,6 +4,8 @@ const mongoose = require("mongoose");
 const Connection = require("../models/Connection");
 const User = require("../models/User");
 const Block = require("../models/Block");
+const Notification = require("../models/Notification");
+
 const protect = require("../middleware/authMiddleware");
 
 const {
@@ -73,8 +75,12 @@ router.get("/", protect, async (req, res) => {
   }
 });
 
-/* GET CONNECTION STATUS */
+/*
+  GET /api/connections/status/:userId
 
+  Get connection status between current user
+  and another user.
+*/
 router.get(
   "/status/:userId",
   protect,
@@ -135,8 +141,11 @@ router.get(
   }
 );
 
-/* SEND CONNECTION REQUEST */
+/*
+  POST /api/connections/request/:userId
 
+  Send a connection request.
+*/
 router.post(
   "/request/:userId",
   protect,
@@ -209,10 +218,16 @@ router.post(
           )
         );
 
+      /*
+        Existing connection.
+      */
       if (connection) {
         const currentId =
           req.user._id.toString();
 
+        /*
+          Already connected.
+        */
         if (
           connection.status ===
           "accepted"
@@ -225,6 +240,10 @@ router.post(
           });
         }
 
+        /*
+          Request already sent by
+          the current user.
+        */
         if (
           connection.status ===
             "pending" &&
@@ -239,6 +258,13 @@ router.post(
           });
         }
 
+        /*
+          The other user already sent
+          a request to the current user.
+
+          Sending a request back accepts
+          the existing request.
+        */
         if (
           connection.status ===
             "pending" &&
@@ -250,6 +276,66 @@ router.post(
 
           await connection.save();
 
+          /*
+            Notify the original requester
+            that their request was accepted.
+          */
+          try {
+            const notification =
+              await Notification.create({
+                recipient:
+                  connection.requester,
+                actor:
+                  req.user._id,
+                type:
+                  "connection-accepted",
+                title:
+                  "Connection accepted",
+                body: `@${req.user.username} accepted your connection request.`,
+                url:
+                  "/discover",
+              });
+
+            const io =
+              req.app.get("io");
+
+            if (io) {
+              const populatedNotification =
+                await Notification.findById(
+                  notification._id
+                )
+                  .populate(
+                    "actor",
+                    "username avatar"
+                  )
+                  .lean();
+
+              io.to(
+                `user:${connection.requester.toString()}`
+              ).emit(
+                "notification:new",
+                populatedNotification
+              );
+
+              io.to(
+                `user:${connection.requester.toString()}`
+              ).emit(
+                "connection-accepted",
+                {
+                  requesterId:
+                    connection.requester.toString(),
+                  connectionId:
+                    connection._id.toString(),
+                }
+              );
+            }
+          } catch (notificationError) {
+            console.error(
+              "Connection accepted notification error:",
+              notificationError
+            );
+          }
+
           return res.json({
             success: true,
             message:
@@ -258,6 +344,10 @@ router.post(
           });
         }
 
+        /*
+          Re-use a rejected connection
+          as a new pending request.
+        */
         connection.requester =
           req.user._id;
 
@@ -269,6 +359,10 @@ router.post(
 
         await connection.save();
       } else {
+        /*
+          Create completely new
+          connection request.
+        */
         connection =
           await Connection.create({
             requester:
@@ -278,18 +372,108 @@ router.post(
           });
       }
 
+      /*
+        ==========================================
+        CREATE IN-APP NOTIFICATION
+        ==========================================
+
+        This was missing before.
+
+        The notification is stored in MongoDB,
+        so the recipient gets:
+        - unread count
+        - notification history
+        - persistent notification after refresh
+        - notification after reopening the app
+      */
+      let notification = null;
+
+      try {
+        notification =
+          await Notification.create({
+            recipient:
+              userId,
+            actor:
+              req.user._id,
+            type:
+              "connection-request",
+            title:
+              "New connection request",
+            body: `@${req.user.username} wants to connect with you.`,
+            url:
+              "/notifications",
+          });
+      } catch (notificationError) {
+        console.error(
+          "Create connection notification error:",
+          notificationError
+        );
+      }
+
+      /*
+        ==========================================
+        REAL-TIME NOTIFICATION
+        ==========================================
+      */
+
       const io =
         req.app.get("io");
 
       if (io) {
-        io.to(`user:${userId.toString()}`).emit(
+        /*
+          Keep the existing connection event.
+        */
+        io.to(
+          `user:${userId.toString()}`
+        ).emit(
           "connection-request",
           {
-            recipientId: userId.toString(),
-            connectionId: connection._id.toString(),
+            recipientId:
+              userId.toString(),
+            connectionId:
+              connection._id.toString(),
           }
         );
+
+        /*
+          Send the notification event
+          used by AppShell.
+
+          AppShell listens for:
+          "notification:new"
+        */
+        if (notification) {
+          try {
+            const populatedNotification =
+              await Notification.findById(
+                notification._id
+              )
+                .populate(
+                  "actor",
+                  "username avatar"
+                )
+                .lean();
+
+            io.to(
+              `user:${userId.toString()}`
+            ).emit(
+              "notification:new",
+              populatedNotification
+            );
+          } catch (notificationError) {
+            console.error(
+              "Emit connection notification error:",
+              notificationError
+            );
+          }
+        }
       }
+
+      /*
+        ==========================================
+        WEB PUSH NOTIFICATION
+        ==========================================
+      */
 
       try {
         await sendPushNotification(
@@ -338,8 +522,11 @@ router.post(
   }
 );
 
-/* INCOMING REQUESTS */
+/*
+  GET /api/connections/requests
 
+  Get incoming connection requests.
+*/
 router.get(
   "/requests",
   protect,
@@ -377,8 +564,11 @@ router.get(
   }
 );
 
-/* ACCEPT */
+/*
+  PATCH /api/connections/:id/accept
 
+  Accept an incoming connection request.
+*/
 router.patch(
   "/:id/accept",
   protect,
@@ -416,16 +606,63 @@ router.patch(
 
       await connection.save();
 
-      const io =
-        req.app.get("io");
+      /*
+        Notify requester that their
+        connection request was accepted.
+      */
+      try {
+        const notification =
+          await Notification.create({
+            recipient:
+              connection.requester,
+            actor:
+              req.user._id,
+            type:
+              "connection-accepted",
+            title:
+              "Connection accepted",
+            body: `@${req.user.username} accepted your connection request.`,
+            url:
+              "/discover",
+          });
 
-      if (io) {
-        io.to(`user:${connection.requester.toString()}`).emit(
-          "connection-accepted",
-          {
-            requesterId: connection.requester.toString(),
-            connectionId: connection._id.toString(),
-          }
+        const io =
+          req.app.get("io");
+
+        if (io) {
+          const populatedNotification =
+            await Notification.findById(
+              notification._id
+            )
+              .populate(
+                "actor",
+                "username avatar"
+              )
+              .lean();
+
+          io.to(
+            `user:${connection.requester.toString()}`
+          ).emit(
+            "notification:new",
+            populatedNotification
+          );
+
+          io.to(
+            `user:${connection.requester.toString()}`
+          ).emit(
+            "connection-accepted",
+            {
+              requesterId:
+                connection.requester.toString(),
+              connectionId:
+                connection._id.toString(),
+            }
+          );
+        }
+      } catch (notificationError) {
+        console.error(
+          "Connection accepted notification error:",
+          notificationError
         );
       }
 
@@ -450,8 +687,11 @@ router.patch(
   }
 );
 
-/* REJECT */
+/*
+  PATCH /api/connections/:id/reject
 
+  Reject an incoming connection request.
+*/
 router.patch(
   "/:id/reject",
   protect,
