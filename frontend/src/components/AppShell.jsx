@@ -40,9 +40,11 @@ function AppShell({ children }) {
   } = useAuth();
 
 
-  /* =========================================================
-     NOTIFICATION COUNT
-     ========================================================= */
+  /*
+   * =====================================================
+   * NOTIFICATION COUNT
+   * =====================================================
+   */
 
   const [
     unreadCount,
@@ -50,13 +52,15 @@ function AppShell({ children }) {
   ] = useState(0);
 
 
-  /* =========================================================
-     CONNECTION REQUEST COUNT
-     ========================================================= */
+  /*
+   * =====================================================
+   * CONNECTION REQUEST COUNT
+   * =====================================================
+   */
 
   const [
-    connectionRequestCount,
-    setConnectionRequestCount,
+    requestCount,
+    setRequestCount,
   ] = useState(0);
 
 
@@ -70,12 +74,15 @@ function AppShell({ children }) {
     );
 
 
-  /* =========================================================
-     LOAD UNREAD NOTIFICATION COUNT
-     ========================================================= */
+  /*
+   * =====================================================
+   * LOAD UNREAD NOTIFICATIONS
+   * =====================================================
+   */
 
   useEffect(() => {
     if (!user?._id) {
+      setUnreadCount(0);
       return undefined;
     }
 
@@ -109,18 +116,24 @@ function AppShell({ children }) {
   }, [user?._id]);
 
 
-  /* =========================================================
-     LOAD PENDING CONNECTION REQUEST COUNT
-     ========================================================= */
+  /*
+   * =====================================================
+   * LOAD CONNECTION REQUEST COUNT
+   *
+   * This reads the real incoming pending requests
+   * from the backend.
+   * =====================================================
+   */
 
   useEffect(() => {
     if (!user?._id) {
+      setRequestCount(0);
       return undefined;
     }
 
     let cancelled = false;
 
-    const loadConnectionRequests = async () => {
+    const loadRequestCount = async () => {
       try {
         const data =
           await getConnectionRequests();
@@ -132,7 +145,7 @@ function AppShell({ children }) {
             ? data.requests
             : [];
 
-        setConnectionRequestCount(
+        setRequestCount(
           requests.length
         );
       } catch (error) {
@@ -145,17 +158,59 @@ function AppShell({ children }) {
       }
     };
 
-    loadConnectionRequests();
+    loadRequestCount();
 
+    /*
+     * Also refresh periodically so the badge stays
+     * correct even if the socket reconnects or an
+     * action happens from another browser/device.
+     */
+    const interval = setInterval(
+      loadRequestCount,
+      15000
+    );
+
+    /*
+     * Refresh when the user returns to the tab.
+     */
+    const handleVisibilityChange = () => {
+      if (
+        document.visibilityState ===
+        "visible"
+      ) {
+        loadRequestCount();
+      }
+    };
+
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange
+    );
+
+    /*
+     * Refresh whenever navigation changes.
+     */
     return () => {
       cancelled = true;
+
+      clearInterval(interval);
+
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange
+      );
     };
-  }, [user?._id]);
+  }, [
+    user?._id,
+    location.pathname,
+  ]);
 
 
-  /* =========================================================
-     REALTIME CONNECTION REQUESTS
-     ========================================================= */
+  /*
+   * =====================================================
+   * REALTIME NOTIFICATIONS
+   * =====================================================
+   */
 
   useEffect(() => {
     if (!user?._id) {
@@ -165,109 +220,18 @@ function AppShell({ children }) {
     if (!socket.connected) {
       socket.connect();
     }
-
-
-    /*
-      A new connection request was received.
-
-      The backend emits this event only to the
-      recipient's user room.
-    */
-    const handleConnectionRequest = () => {
-      setConnectionRequestCount(
-        (current) => current + 1
-      );
-    };
-
-
-    /*
-      Used after accepting or declining a request.
-
-      We ask the backend for the real number instead
-      of blindly subtracting 1. This keeps the badge
-      correct even with multiple requests.
-    */
-    const refreshConnectionRequestCount =
-      async () => {
-        try {
-          const data =
-            await getConnectionRequests();
-
-          const requests =
-            Array.isArray(data?.requests)
-              ? data.requests
-              : [];
-
-          setConnectionRequestCount(
-            requests.length
-          );
-        } catch (error) {
-          console.error(
-            "Unable to refresh connection request count:",
-            error
-          );
-        }
-      };
-
-
-    const handleConnectionRequestUpdated =
-      () => {
-        refreshConnectionRequestCount();
-      };
-
-
-    socket.on(
-      "connection-request",
-      handleConnectionRequest
-    );
-
-
-    window.addEventListener(
-      "connection-request:updated",
-      handleConnectionRequestUpdated
-    );
-
-
-    return () => {
-      socket.off(
-        "connection-request",
-        handleConnectionRequest
-      );
-
-      window.removeEventListener(
-        "connection-request:updated",
-        handleConnectionRequestUpdated
-      );
-    };
-  }, [user?._id]);
-
-
-  /* =========================================================
-     REALTIME GENERAL NOTIFICATIONS
-     ========================================================= */
-
-  useEffect(() => {
-    if (!user?._id) {
-      return undefined;
-    }
-
-    if (!socket.connected) {
-      socket.connect();
-    }
-
 
     const handleNotification = () => {
       setUnreadCount(
-        (current) => current + 1
+        (current) =>
+          current + 1
       );
     };
-
 
     socket.on(
       "notification:new",
       handleNotification
     );
-
 
     return () => {
       socket.off(
@@ -278,9 +242,127 @@ function AppShell({ children }) {
   }, [user?._id]);
 
 
-  /* =========================================================
-     REFRESH NOTIFICATION COUNT WHEN PAGE OPENS
-     ========================================================= */
+  /*
+   * =====================================================
+   * REALTIME CONNECTION REQUESTS
+   *
+   * Backend emits "connection-request" whenever
+   * somebody sends the logged-in user a request.
+   * =====================================================
+   */
+
+  useEffect(() => {
+    if (!user?._id) {
+      return undefined;
+    }
+
+    if (!socket.connected) {
+      socket.connect();
+    }
+
+    const handleConnectionRequest = () => {
+      /*
+       * Don't blindly increment because the socket
+       * event could be duplicated after reconnecting.
+       *
+       * Re-read the backend count instead.
+       */
+
+      getConnectionRequests()
+        .then((data) => {
+          const requests =
+            Array.isArray(data?.requests)
+              ? data.requests
+              : [];
+
+          setRequestCount(
+            requests.length
+          );
+        })
+        .catch((error) => {
+          console.error(
+            "Unable to refresh connection request count:",
+            error
+          );
+        });
+    };
+
+    socket.on(
+      "connection-request",
+      handleConnectionRequest
+    );
+
+    return () => {
+      socket.off(
+        "connection-request",
+        handleConnectionRequest
+      );
+    };
+  }, [user?._id]);
+
+
+  /*
+   * =====================================================
+   * REFRESH REQUEST COUNT WHEN REQUESTS PAGE OPENS
+   * =====================================================
+   */
+
+  useEffect(() => {
+    if (
+      location.pathname !==
+      "/message-requests"
+    ) {
+      return undefined;
+    }
+
+    if (!user?._id) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const refresh = async () => {
+      try {
+        const data =
+          await getConnectionRequests();
+
+        if (cancelled) return;
+
+        const requests =
+          Array.isArray(data?.requests)
+            ? data.requests
+            : [];
+
+        setRequestCount(
+          requests.length
+        );
+      } catch (error) {
+        if (!cancelled) {
+          console.error(
+            "Unable to refresh connection request count:",
+            error
+          );
+        }
+      }
+    };
+
+    refresh();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    location.pathname,
+    user?._id,
+  ]);
+
+
+  /*
+   * =====================================================
+   * REFRESH NOTIFICATION COUNT WHEN NOTIFICATIONS
+   * PAGE OPENS
+   * =====================================================
+   */
 
   useEffect(() => {
     if (
@@ -317,12 +399,16 @@ function AppShell({ children }) {
     return () => {
       cancelled = true;
     };
-  }, [location.pathname]);
+  }, [
+    location.pathname,
+  ]);
 
 
-  /* =========================================================
-     LOGOUT
-     ========================================================= */
+  /*
+   * =====================================================
+   * LOGOUT
+   * =====================================================
+   */
 
   const handleLogout = async () => {
     try {
@@ -338,6 +424,12 @@ function AppShell({ children }) {
   };
 
 
+  /*
+   * =====================================================
+   * RENDER
+   * =====================================================
+   */
+
   return (
     <div className="app-shell">
 
@@ -352,8 +444,6 @@ function AppShell({ children }) {
 
         <div className="app-navbar-inner">
 
-          {/* LOGO */}
-
           <Link
             to="/dashboard"
             className="app-navbar-logo"
@@ -362,8 +452,6 @@ function AppShell({ children }) {
             CoChat
           </Link>
 
-
-          {/* NAVIGATION */}
 
           <nav
             className="app-navbar-links"
@@ -442,41 +530,40 @@ function AppShell({ children }) {
             </Link>
 
 
-            {/* CONNECTION REQUESTS */}
+            {/* REQUESTS */}
 
             <Link
               to="/message-requests"
-              className={`app-nav-link ${
+              className={`app-nav-link app-nav-link-requests ${
                 isActive(
                   "/message-requests"
                 )
                   ? "app-nav-link-active"
                   : ""
               }`}
-              style={{
-                position: "relative",
-              }}
-              aria-label={
-                connectionRequestCount > 0
-                  ? `${connectionRequestCount} pending connection requests`
-                  : "Connection requests"
-              }
             >
 
-              <MailPlus size={16} />
+              <span className="app-nav-link-icon-wrapper">
+
+                <MailPlus size={16} />
+
+                {requestCount > 0 && (
+                  <span
+                    className="app-request-badge"
+                    aria-label={`${requestCount} incoming connection requests`}
+                  >
+                    {requestCount > 99
+                      ? "99+"
+                      : requestCount}
+                  </span>
+                )}
+
+              </span>
+
 
               <span>
                 Requests
               </span>
-
-
-              {connectionRequestCount > 0 && (
-                <span className="app-notification-badge">
-                  {connectionRequestCount > 99
-                    ? "99+"
-                    : connectionRequestCount}
-                </span>
-              )}
 
             </Link>
 
@@ -508,7 +595,6 @@ function AppShell({ children }) {
             >
 
               <Bell size={18} />
-
 
               {unreadCount > 0 && (
                 <span className="app-notification-badge">
