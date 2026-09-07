@@ -1,0 +1,32 @@
+.presence-dot {
+  display: inline-block;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  border: 2px solid var(--background, #ffffff);
+  box-sizing: border-box;
+}
+
+.presence-dot-small {
+  width: 8px;
+  height: 8px;
+}
+
+.presence-dot-medium {
+  width: 10px;
+  height: 10px;
+}
+
+.presence-dot-large {
+  width: 12px;
+  height: 12px;
+}
+
+.presence-dot-online {
+  background: #32c759;
+  box-shadow:
+    0 0 0 2px rgba(50, 199, 89, 0.12);
+}
+
+.presence-dot-offline {
+  background: #9ca3af;
+}

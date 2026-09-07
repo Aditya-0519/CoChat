@@ -25,12 +25,13 @@ import { socket } from "../services/socket";
 
 import {
   getUnreadNotificationCount,
+  registerNotificationWorker,
+  syncNotificationSubscription,
 } from "../services/notificationService";
 
 import {
   getConnectionRequestCount,
 } from "../services/connectionService";
-
 
 function AppShell({ children }) {
   const location = useLocation();
@@ -39,7 +40,6 @@ function AppShell({ children }) {
     user,
     logout,
   } = useAuth();
-
 
   /*
    * =====================================================
@@ -52,32 +52,10 @@ function AppShell({ children }) {
     setUnreadCount,
   ] = useState(0);
 
-
   /*
    * =====================================================
    * CONNECTION REQUEST BADGE
    * =====================================================
-   *
-   * IMPORTANT:
-   *
-   * The "Requests" page (MessageRequests.jsx) shows
-   * pending CONNECTION requests using:
-   *
-   * GET /api/connections/requests
-   * GET /api/connections/requests/sent
-   *
-   * through connectionService.js.
-   *
-   * The badge on this icon must count the exact same
-   * thing that page shows, so we use the matching
-   * lightweight count endpoint:
-   *
-   * GET /api/connections/requests/count
-   *
-   * (Previously this used getMessageRequests(), which
-   * hits a completely unrelated endpoint
-   * /api/conversations/requests, so the badge never
-   * matched what was actually on the Requests page.)
    */
 
   const [
@@ -85,16 +63,13 @@ function AppShell({ children }) {
     setPendingRequestCount,
   ] = useState(0);
 
-
   const isActive = (path) =>
     location.pathname === path;
-
 
   const isGroupsActive =
     location.pathname.startsWith(
       "/groups"
     );
-
 
   /*
    * =====================================================
@@ -123,7 +98,6 @@ function AppShell({ children }) {
       }
     }, [user?._id]);
 
-
   useEffect(() => {
     if (!user?._id) {
       setPendingRequestCount(0);
@@ -134,31 +108,18 @@ function AppShell({ children }) {
 
     const load = async () => {
       if (cancelled) return;
+
       await loadPendingRequestCount();
     };
 
-    /*
-     * Load immediately when the
-     * navbar mounts.
-     */
     load();
 
-
-    /*
-     * Keep the badge synchronized even
-     * if a realtime event is missed.
-     */
     const interval =
       window.setInterval(
         load,
         10000
       );
 
-
-    /*
-     * Refresh when user returns to
-     * the browser tab.
-     */
     const handleVisibilityChange =
       () => {
         if (
@@ -174,14 +135,6 @@ function AppShell({ children }) {
       handleVisibilityChange
     );
 
-
-    /*
-     * The Requests page (MessageRequests.jsx)
-     * dispatches this custom event the moment the
-     * user accepts/declines a request in the same
-     * tab, so the badge updates instantly without
-     * waiting on a socket round trip.
-     */
     const handleLocalUpdate =
       () => {
         load();
@@ -191,7 +144,6 @@ function AppShell({ children }) {
       "connection-request:updated",
       handleLocalUpdate
     );
-
 
     return () => {
       cancelled = true;
@@ -210,8 +162,10 @@ function AppShell({ children }) {
         handleLocalUpdate
       );
     };
-  }, [user?._id, loadPendingRequestCount]);
-
+  }, [
+    user?._id,
+    loadPendingRequestCount,
+  ]);
 
   /*
    * =====================================================
@@ -254,6 +208,59 @@ function AppShell({ children }) {
     };
   }, [user?._id]);
 
+  /*
+   * =====================================================
+   * SERVICE WORKER + PUSH SUBSCRIPTION SYNC
+   * =====================================================
+   *
+   * Register the service worker for every authenticated
+   * session.
+   *
+   * If notification permission has already been granted,
+   * synchronize the existing push subscription silently.
+   *
+   * We NEVER request permission from AppShell.
+   */
+
+  useEffect(() => {
+    if (!user?._id) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const setupNotifications =
+      async () => {
+        try {
+          await registerNotificationWorker();
+
+          if (
+            cancelled
+          ) {
+            return;
+          }
+
+          if (
+            "Notification" in window &&
+            Notification.permission ===
+              "granted"
+          ) {
+            await syncNotificationSubscription();
+          }
+        } catch (error) {
+          console.error(
+            "Notification setup error:",
+            error
+          );
+        }
+      };
+
+    setupNotifications();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [user?._id]);
 
   /*
    * =====================================================
@@ -273,18 +280,10 @@ function AppShell({ children }) {
     return undefined;
   }, [user?._id]);
 
-
   /*
    * =====================================================
-   * REALTIME: NEW CONNECTION REQUEST RECEIVED
+   * REALTIME: NEW CONNECTION REQUEST
    * =====================================================
-   *
-   * Emitted straight away by the backend
-   * (connectionRoutes.js -> POST /request/:userId)
-   * to `user:<recipientId>` as soon as someone sends
-   * a connection request, so the badge appears the
-   * instant it happens instead of waiting up to 10s
-   * for the polling fallback.
    */
 
   useEffect(() => {
@@ -313,16 +312,10 @@ function AppShell({ children }) {
     };
   }, [user?._id]);
 
-
   /*
    * =====================================================
-   * REALTIME: REQUEST ACCEPTED / DECLINED
+   * REALTIME: REQUEST UPDATED
    * =====================================================
-   *
-   * Emitted by the backend whenever a pending request
-   * this user received changes status. We re-fetch
-   * rather than blindly decrementing so the badge stays
-   * correct even if multiple tabs/devices are open.
    */
 
   useEffect(() => {
@@ -346,23 +339,15 @@ function AppShell({ children }) {
         handleRequestUpdated
       );
     };
-  }, [user?._id, loadPendingRequestCount]);
-
+  }, [
+    user?._id,
+    loadPendingRequestCount,
+  ]);
 
   /*
    * =====================================================
    * REALTIME NOTIFICATIONS
    * =====================================================
-   *
-   * Every persistent notification created by the
-   * backend is sent through:
-   *
-   * notification:new
-   *
-   * A connection request is one of those notifications
-   * (type: "connection-request"). This acts as a backup
-   * in case the dedicated "connection-request" socket
-   * event above is ever missed.
    */
 
   useEffect(() => {
@@ -372,22 +357,11 @@ function AppShell({ children }) {
 
     const handleNotification =
       (notification) => {
-
-        /*
-         * Update normal notification badge.
-         */
         setUnreadCount(
           (current) =>
             current + 1
         );
 
-
-        /*
-         * If this notification is a new
-         * connection request, immediately
-         * reload the real pending request
-         * count.
-         */
         if (
           notification?.type ===
             "connection-request" ||
@@ -398,12 +372,10 @@ function AppShell({ children }) {
         }
       };
 
-
     socket.on(
       "notification:new",
       handleNotification
     );
-
 
     return () => {
       socket.off(
@@ -411,8 +383,10 @@ function AppShell({ children }) {
         handleNotification
       );
     };
-  }, [user?._id, loadPendingRequestCount]);
-
+  }, [
+    user?._id,
+    loadPendingRequestCount,
+  ]);
 
   /*
    * =====================================================
@@ -459,15 +433,10 @@ function AppShell({ children }) {
     location.pathname,
   ]);
 
-
   /*
    * =====================================================
    * REFRESH REQUEST COUNT WHEN REQUESTS PAGE OPENS
    * =====================================================
-   *
-   * Covers the case where the user opened the Requests
-   * page from a stale tab (e.g. after a long time away)
-   * before any socket event or poll tick has fired.
    */
 
   useEffect(() => {
@@ -483,7 +452,6 @@ function AppShell({ children }) {
     location.pathname,
     loadPendingRequestCount,
   ]);
-
 
   /*
    * =====================================================
@@ -505,7 +473,6 @@ function AppShell({ children }) {
       }
     };
 
-
   /*
    * =====================================================
    * RENDER
@@ -521,7 +488,6 @@ function AppShell({ children }) {
         <div className="app-shell-glow app-shell-glow-three" />
       </div>
 
-
       <header className="app-navbar">
 
         <div className="app-navbar-inner">
@@ -534,13 +500,10 @@ function AppShell({ children }) {
             CoChat
           </Link>
 
-
           <nav
             className="app-navbar-links"
             aria-label="Primary navigation"
           >
-
-            {/* HOME */}
 
             <Link
               to="/dashboard"
@@ -557,9 +520,6 @@ function AppShell({ children }) {
               </span>
             </Link>
 
-
-            {/* DISCOVER */}
-
             <Link
               to="/discover"
               className={`app-nav-link ${
@@ -574,9 +534,6 @@ function AppShell({ children }) {
                 Discover
               </span>
             </Link>
-
-
-            {/* MESSAGES */}
 
             <Link
               to="/messages"
@@ -593,9 +550,6 @@ function AppShell({ children }) {
               </span>
             </Link>
 
-
-            {/* GROUPS */}
-
             <Link
               to="/groups"
               className={`app-nav-link ${
@@ -611,11 +565,6 @@ function AppShell({ children }) {
               </span>
             </Link>
 
-
-            {/* =================================================
-                REQUESTS
-            ================================================= */}
-
             <Link
               to="/message-requests"
               className={`app-nav-link app-nav-link-requests ${
@@ -626,11 +575,9 @@ function AppShell({ children }) {
                   : ""
               }`}
             >
-
               <span className="app-nav-link-icon-wrapper">
 
                 <MailPlus size={16} />
-
 
                 {pendingRequestCount >
                   0 && (
@@ -647,7 +594,6 @@ function AppShell({ children }) {
 
               </span>
 
-
               <span>
                 Requests
               </span>
@@ -656,15 +602,7 @@ function AppShell({ children }) {
 
           </nav>
 
-
-          {/* =================================================
-              RIGHT SIDE
-          ================================================= */}
-
           <div className="app-navbar-actions">
-
-
-            {/* NOTIFICATIONS */}
 
             <Link
               to="/notifications"
@@ -685,7 +623,6 @@ function AppShell({ children }) {
 
               <Bell size={18} />
 
-
               {unreadCount >
                 0 && (
                 <span className="app-notification-badge">
@@ -697,9 +634,6 @@ function AppShell({ children }) {
               )}
 
             </Link>
-
-
-            {/* PROFILE */}
 
             <Link
               to="/profile"
@@ -723,9 +657,6 @@ function AppShell({ children }) {
 
             </Link>
 
-
-            {/* LOGOUT */}
-
             <button
               type="button"
               className="app-navbar-logout"
@@ -744,7 +675,6 @@ function AppShell({ children }) {
 
       </header>
 
-
       <main className="app-shell-content">
         {children}
       </main>
@@ -752,6 +682,5 @@ function AppShell({ children }) {
     </div>
   );
 }
-
 
 export default AppShell;

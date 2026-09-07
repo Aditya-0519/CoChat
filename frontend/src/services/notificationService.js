@@ -1,6 +1,7 @@
 import { API_BASE_URL } from "./apiConfig";
 
 const API_URL = `${API_BASE_URL}/notifications`;
+
 /*
   Convert VAPID public key into Uint8Array.
 */
@@ -88,16 +89,19 @@ export const markAllNotificationsAsRead = async () => {
   ========================================
 */
 
+/*
+  Get the server's VAPID public key.
+*/
 export const getPublicKey = async () => {
   const response = await fetch(
     `${API_URL}/public-key`
   );
 
-  const data = await response.json();
+  const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
-      data.message ||
+      data?.message ||
         "Unable to load notification configuration."
     );
   }
@@ -105,6 +109,13 @@ export const getPublicKey = async () => {
   return data.publicKey;
 };
 
+/*
+  Register the CoChat service worker.
+
+  This function is intentionally safe to call multiple
+  times. The browser returns the existing registration
+  when the worker is already registered.
+*/
 export const registerNotificationWorker =
   async () => {
     if (!("serviceWorker" in navigator)) {
@@ -114,84 +125,147 @@ export const registerNotificationWorker =
     }
 
     return navigator.serviceWorker.register(
-      "/sw.js"
+      "/sw.js",
+      {
+        scope: "/",
+      }
     );
   };
 
-export const enableNotifications = async () => {
-  if (!("Notification" in window)) {
-    throw new Error(
-      "This browser does not support notifications."
-    );
-  }
+/*
+  Synchronize an already-granted browser push
+  permission with the currently authenticated
+  CoChat account.
 
-  if (!("PushManager" in window)) {
-    throw new Error(
-      "This browser does not support push notifications."
-    );
-  }
-
-  const permission =
-    await Notification.requestPermission();
-
-  if (permission !== "granted") {
-    throw new Error(
-      "Notification permission was not granted."
-    );
-  }
-
-  const registration =
-    await registerNotificationWorker();
-
-  const publicKey =
-    await getPublicKey();
-
-  let subscription =
-    await registration.pushManager.getSubscription();
-
-  if (!subscription) {
-    subscription =
-      await registration.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey:
-          urlBase64ToUint8Array(
-            publicKey
-          ),
-      });
-  }
-
-  const response = await fetch(
-    `${API_URL}/subscribe`,
-    {
-      method: "POST",
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        subscription,
-      }),
+  IMPORTANT:
+  This function NEVER asks the user for permission.
+*/
+export const syncNotificationSubscription =
+  async () => {
+    if (
+      !("Notification" in window) ||
+      !("PushManager" in window)
+    ) {
+      return {
+        enabled: false,
+        reason: "unsupported",
+      };
     }
-  );
 
-  const data = await response.json();
+    if (
+      Notification.permission !==
+      "granted"
+    ) {
+      return {
+        enabled: false,
+        reason: Notification.permission,
+      };
+    }
 
-  if (!response.ok) {
-    throw new Error(
-      data.message ||
-        "Unable to save notification subscription."
-    );
-  }
+    const registration =
+      await registerNotificationWorker();
 
-  return {
-    subscription,
-    ...data,
+    /*
+      Wait until the service worker is actually
+      ready before touching PushManager.
+    */
+    const readyRegistration =
+      await navigator.serviceWorker.ready;
+
+    const publicKey =
+      await getPublicKey();
+
+    let subscription =
+      await readyRegistration.pushManager.getSubscription();
+
+    if (!subscription) {
+      subscription =
+        await readyRegistration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey:
+            urlBase64ToUint8Array(
+              publicKey
+            ),
+        });
+    }
+
+    const response =
+      await fetch(
+        `${API_URL}/subscribe`,
+        {
+          method: "POST",
+          credentials: "include",
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+          body: JSON.stringify({
+            subscription:
+              subscription.toJSON
+                ? subscription.toJSON()
+                : subscription,
+          }),
+        }
+      );
+
+    const data =
+      await response
+        .json()
+        .catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        data?.message ||
+          "Unable to synchronize notification subscription."
+      );
+    }
+
+    return {
+      enabled: true,
+      subscription,
+      ...data,
+    };
   };
-};
 
+/*
+  Ask for notification permission and enable
+  Web Push for this browser/device.
+*/
+export const enableNotifications =
+  async () => {
+    if (!("Notification" in window)) {
+      throw new Error(
+        "This browser does not support notifications."
+      );
+    }
+
+    if (!("PushManager" in window)) {
+      throw new Error(
+        "This browser does not support push notifications."
+      );
+    }
+
+    const permission =
+      await Notification.requestPermission();
+
+    if (permission !== "granted") {
+      throw new Error(
+        "Notification permission was not granted."
+      );
+    }
+
+    return syncNotificationSubscription();
+  };
+
+/*
+  Disable push notifications for the current
+  browser/device.
+*/
 export const disableNotifications =
   async () => {
-    if (!("serviceWorker" in navigator)) {
+    if (
+      !("serviceWorker" in navigator)
+    ) {
       return;
     }
 
@@ -217,7 +291,8 @@ export const disableNotifications =
         method: "DELETE",
         credentials: "include",
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type":
+            "application/json",
         },
         body: JSON.stringify({
           endpoint:

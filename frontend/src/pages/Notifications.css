@@ -279,6 +279,23 @@
   font-weight: 700;
 }
 
+.notifications-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.notifications-enabled-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0.8;
+}
+
 @media (max-width: 640px) {
   .notifications-page {
     padding: 28px 15px 50px;
@@ -286,6 +303,12 @@
 
   .notifications-header {
     align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .notifications-header-actions {
+    width: 100%;
+    align-items: stretch;
     flex-direction: column;
   }
 

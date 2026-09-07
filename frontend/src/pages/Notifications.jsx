@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+
 import {
   Bell,
   Check,
@@ -10,12 +11,16 @@ import {
   X,
   ArrowRight,
 } from "lucide-react";
+
 import { useNavigate } from "react-router-dom";
+
 import { socket } from "../services/socket";
+
 import {
   getNotifications,
   markNotificationAsRead,
   markAllNotificationsAsRead,
+  enableNotifications,
 } from "../services/notificationService";
 
 import "./Notifications.css";
@@ -23,68 +28,144 @@ import "./Notifications.css";
 function Notifications() {
   const navigate = useNavigate();
 
-  const [notifications, setNotifications] =
-    useState([]);
+  const [
+    notifications,
+    setNotifications,
+  ] = useState([]);
 
-  const [loading, setLoading] =
-    useState(true);
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
 
-  const [error, setError] =
-    useState("");
+  const [
+    error,
+    setError,
+  ] = useState("");
 
-useEffect(() => {
-  let mounted = true;
+  const [
+    notificationPermission,
+    setNotificationPermission,
+  ] = useState(() =>
+    "Notification" in window
+      ? Notification.permission
+      : "unsupported"
+  );
 
-  const loadInitialNotifications =
+  const [
+    enablingNotifications,
+    setEnablingNotifications,
+  ] = useState(false);
+
+  /*
+   * =====================================================
+   * ENABLE BROWSER NOTIFICATIONS
+   * =====================================================
+   */
+
+  const handleEnableNotifications =
     async () => {
       try {
-        const data =
-          await getNotifications();
+        setEnablingNotifications(true);
+        setError("");
 
-        if (!mounted) return;
+        await enableNotifications();
 
-        setNotifications(
-          data.notifications || []
+        setNotificationPermission(
+          "granted"
         );
       } catch (err) {
-        if (!mounted) return;
+        console.error(
+          "Unable to enable notifications:",
+          err
+        );
+
+        setNotificationPermission(
+          "Notification" in window
+            ? Notification.permission
+            : "unsupported"
+        );
 
         setError(
           err.message ||
-            "Unable to load notifications."
+            "Unable to enable browser notifications."
         );
       } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        setEnablingNotifications(
+          false
+        );
       }
     };
 
-  loadInitialNotifications();
+  /*
+   * =====================================================
+   * LOAD NOTIFICATIONS
+   * =====================================================
+   */
 
-  return () => {
-    mounted = false;
-  };
-}, []);
+  useEffect(() => {
+    let mounted = true;
+
+    const loadInitialNotifications =
+      async () => {
+        try {
+          const data =
+            await getNotifications();
+
+          if (!mounted) return;
+
+          setNotifications(
+            data.notifications || []
+          );
+        } catch (err) {
+          if (!mounted) return;
+
+          setError(
+            err.message ||
+              "Unable to load notifications."
+          );
+        } finally {
+          if (mounted) {
+            setLoading(false);
+          }
+        }
+      };
+
+    loadInitialNotifications();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  /*
+   * =====================================================
+   * REALTIME NOTIFICATIONS
+   * =====================================================
+   */
+
   useEffect(() => {
     const handleNewNotification =
       (notification) => {
-        setNotifications((current) => {
-          const exists = current.some(
-            (item) =>
-              item._id ===
-              notification._id
-          );
+        setNotifications(
+          (current) => {
+            const exists =
+              current.some(
+                (item) =>
+                  item._id ===
+                  notification._id
+              );
 
-          if (exists) {
-            return current;
+            if (exists) {
+              return current;
+            }
+
+            return [
+              notification,
+              ...current,
+            ].slice(0, 50);
           }
-
-          return [
-            notification,
-            ...current,
-          ].slice(0, 50);
-        });
+        );
       };
 
     socket.on(
@@ -100,6 +181,12 @@ useEffect(() => {
     };
   }, []);
 
+  /*
+   * =====================================================
+   * MARK SINGLE NOTIFICATION READ
+   * =====================================================
+   */
+
   const handleNotificationClick =
     async (notification) => {
       try {
@@ -110,15 +197,16 @@ useEffect(() => {
 
           setNotifications(
             (current) =>
-              current.map((item) =>
-                item._id ===
-                notification._id
-                  ? {
-                      ...item,
-                      readAt:
-                        new Date().toISOString(),
-                    }
-                  : item
+              current.map(
+                (item) =>
+                  item._id ===
+                  notification._id
+                    ? {
+                        ...item,
+                        readAt:
+                          new Date().toISOString(),
+                      }
+                    : item
               )
           );
         }
@@ -130,9 +218,17 @@ useEffect(() => {
       }
 
       if (notification.url) {
-        navigate(notification.url);
+        navigate(
+          notification.url
+        );
       }
     };
+
+  /*
+   * =====================================================
+   * MARK ALL READ
+   * =====================================================
+   */
 
   const handleMarkAllRead =
     async () => {
@@ -141,20 +237,33 @@ useEffect(() => {
 
         setNotifications(
           (current) =>
-            current.map((notification) => ({
-              ...notification,
-              readAt:
-                notification.readAt ||
-                new Date().toISOString(),
-            }))
+            current.map(
+              (notification) => ({
+                ...notification,
+                readAt:
+                  notification.readAt ||
+                  new Date().toISOString(),
+              })
+            )
         );
       } catch (err) {
         console.error(
           "Unable to mark all notifications as read:",
           err
         );
+
+        setError(
+          err.message ||
+            "Unable to mark all notifications as read."
+        );
       }
     };
+
+  /*
+   * =====================================================
+   * ICON
+   * =====================================================
+   */
 
   const getIcon = (type) => {
     switch (type) {
@@ -167,17 +276,27 @@ useEffect(() => {
       case "message":
       case "message-request":
       case "message-request-accepted":
-        return <MessageCircle size={19} />;
+        return (
+          <MessageCircle size={19} />
+        );
 
       case "group-created":
       case "group-added":
       case "group-message":
-        return <UsersRound size={19} />;
+        return (
+          <UsersRound size={19} />
+        );
 
       default:
         return <Bell size={19} />;
     }
   };
+
+  /*
+   * =====================================================
+   * TIME FORMAT
+   * =====================================================
+   */
 
   const formatTime = (date) => {
     if (!date) return "";
@@ -190,7 +309,8 @@ useEffect(() => {
 
     const seconds =
       Math.floor(
-        (now - created) / 1000
+        (now - created) /
+          1000
       );
 
     if (seconds < 60) {
@@ -198,21 +318,27 @@ useEffect(() => {
     }
 
     const minutes =
-      Math.floor(seconds / 60);
+      Math.floor(
+        seconds / 60
+      );
 
     if (minutes < 60) {
       return `${minutes}m ago`;
     }
 
     const hours =
-      Math.floor(minutes / 60);
+      Math.floor(
+        minutes / 60
+      );
 
     if (hours < 24) {
       return `${hours}h ago`;
     }
 
     const days =
-      Math.floor(hours / 24);
+      Math.floor(
+        hours / 24
+      );
 
     if (days < 7) {
       return `${days}d ago`;
@@ -233,12 +359,21 @@ useEffect(() => {
         !notification.readAt
     ).length;
 
+  /*
+   * =====================================================
+   * RENDER
+   * =====================================================
+   */
+
   return (
     <div className="notifications-page">
+
       <div className="notifications-page-inner">
 
         <section className="notifications-header">
+
           <div>
+
             <div className="notifications-eyebrow">
               <Bell size={15} />
               YOUR ACTIVITY
@@ -252,19 +387,58 @@ useEffect(() => {
               Stay updated with what is
               happening around you.
             </p>
+
           </div>
 
-          {notifications.length > 0 && (
-            <button
-              type="button"
-              className="notifications-mark-all"
-              onClick={handleMarkAllRead}
-              disabled={unreadCount === 0}
-            >
-              <CheckCheck size={17} />
-              Mark all as read
-            </button>
-          )}
+          <div className="notifications-header-actions">
+
+            {notificationPermission ===
+              "default" && (
+              <button
+                type="button"
+                className="notifications-mark-all"
+                onClick={
+                  handleEnableNotifications
+                }
+                disabled={
+                  enablingNotifications
+                }
+              >
+                <Bell size={17} />
+
+                {enablingNotifications
+                  ? "Enabling..."
+                  : "Enable notifications"}
+              </button>
+            )}
+
+            {notificationPermission ===
+              "granted" && (
+              <span className="notifications-enabled-label">
+                <Check size={16} />
+                Notifications enabled
+              </span>
+            )}
+
+            {notifications.length >
+              0 && (
+              <button
+                type="button"
+                className="notifications-mark-all"
+                onClick={
+                  handleMarkAllRead
+                }
+                disabled={
+                  unreadCount === 0
+                }
+              >
+                <CheckCheck size={17} />
+                Mark all as read
+              </button>
+            )}
+
+          </div>
+
         </section>
 
         {error && (
@@ -275,15 +449,21 @@ useEffect(() => {
         )}
 
         <section className="notifications-card">
+
           {loading ? (
             <div className="notifications-state">
+
               <div className="notifications-loader" />
+
               <p>
                 Loading your notifications...
               </p>
+
             </div>
-          ) : notifications.length === 0 ? (
+          ) : notifications.length ===
+            0 ? (
             <div className="notifications-empty">
+
               <div className="notifications-empty-icon">
                 <Bell size={28} />
               </div>
@@ -301,19 +481,25 @@ useEffect(() => {
               <button
                 type="button"
                 onClick={() =>
-                  navigate("/discover")
+                  navigate(
+                    "/discover"
+                  )
                 }
               >
                 Discover people
                 <ArrowRight size={17} />
               </button>
+
             </div>
           ) : (
             <div className="notifications-list">
+
               {notifications.map(
                 (notification) => (
                   <button
-                    key={notification._id}
+                    key={
+                      notification._id
+                    }
                     type="button"
                     className={`notification-item ${
                       !notification.readAt
@@ -326,7 +512,9 @@ useEffect(() => {
                       )
                     }
                   >
+
                     <div className="notification-avatar">
+
                       {notification.actor
                         ?.avatar ? (
                         <img
@@ -342,10 +530,13 @@ useEffect(() => {
                           notification.type
                         )
                       )}
+
                     </div>
 
                     <div className="notification-content">
+
                       <div className="notification-top">
+
                         <span className="notification-title">
                           {
                             notification.title
@@ -357,6 +548,7 @@ useEffect(() => {
                             notification.createdAt
                           )}
                         </span>
+
                       </div>
 
                       <p>
@@ -364,6 +556,7 @@ useEffect(() => {
                           notification.body
                         }
                       </p>
+
                     </div>
 
                     {!notification.readAt && (
@@ -376,13 +569,18 @@ useEffect(() => {
                         className="notification-read-icon"
                       />
                     )}
+
                   </button>
                 )
               )}
+
             </div>
           )}
+
         </section>
+
       </div>
+
     </div>
   );
 }

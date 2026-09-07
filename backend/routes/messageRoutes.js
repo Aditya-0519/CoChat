@@ -16,9 +16,11 @@ const {
 const router = express.Router();
 
 /*
-  Helper:
-  Check whether a user is a member of a conversation.
+|--------------------------------------------------------------------------
+| HELPERS
+|--------------------------------------------------------------------------
 */
+
 const getConversationForUser = async (
   conversationId,
   userId
@@ -29,11 +31,109 @@ const getConversationForUser = async (
   });
 };
 
+const isValidObjectId = (value) =>
+  mongoose.Types.ObjectId.isValid(value);
+
 /*
-  Helper:
-  Create an in-app notification and optionally
-  send a push notification depending on mute state.
+  Cursor format:
+
+  {
+    createdAt: ISO date,
+    id: message id
+  }
+
+  We encode this so the frontend can safely
+  send it back to the API.
 */
+const encodeCursor = (message) => {
+  if (!message) {
+    return null;
+  }
+
+  const payload = JSON.stringify({
+    createdAt: message.createdAt,
+    id: message._id.toString(),
+  });
+
+  return Buffer.from(payload).toString(
+    "base64url"
+  );
+};
+
+const decodeCursor = (cursor) => {
+  if (!cursor) {
+    return null;
+  }
+
+  try {
+    const decoded =
+      Buffer.from(
+        cursor,
+        "base64url"
+      ).toString("utf8");
+
+    const parsed =
+      JSON.parse(decoded);
+
+    if (
+      !parsed?.createdAt ||
+      !isValidObjectId(parsed.id)
+    ) {
+      return null;
+    }
+
+    const createdAt =
+      new Date(parsed.createdAt);
+
+    if (
+      Number.isNaN(
+        createdAt.getTime()
+      )
+    ) {
+      return null;
+    }
+
+    return {
+      createdAt,
+      id: parsed.id,
+    };
+  } catch {
+    return null;
+  }
+};
+
+/*
+  Create a receipt entry for every recipient.
+
+  The sender does NOT need a receipt for their own
+  message.
+
+  We keep receipts on the message because delivery
+  and read state belongs to each recipient.
+*/
+const buildReceipts = (
+  participants,
+  senderId
+) => {
+  return participants
+    .filter(
+      (participant) =>
+        participant.toString() !==
+        senderId.toString()
+    )
+    .map((participant) => ({
+      user: participant,
+      deliveredAt: null,
+      readAt: null,
+    }));
+};
+
+/*
+|--------------------------------------------------------------------------
+| NOTIFICATIONS
+|--------------------------------------------------------------------------
+*/
+
 const notifyMessageRecipient = async ({
   req,
   recipient,
@@ -49,29 +149,27 @@ const notifyMessageRecipient = async ({
     /*
       Always create the in-app notification.
     */
-    const notification = await createNotification({
-      recipient,
-      actor,
-      type,
-      title,
-      body,
-      url,
-    });
+    const notification =
+      await createNotification({
+        recipient,
+        actor,
+        type,
+        title,
+        body,
+        url,
+      });
 
     /*
-      Check whether this conversation is muted
-      for the recipient.
+      Conversation mute only affects push.
     */
     const setting = conversationId
       ? await ConversationSetting.findOne({
-          conversation: conversationId,
+          conversation:
+            conversationId,
           user: recipient,
         })
       : null;
 
-    /*
-      Push notifications respect mute.
-    */
     if (!setting?.muted) {
       await sendPushNotification(
         recipient,
@@ -80,9 +178,10 @@ const notifyMessageRecipient = async ({
           body,
           type,
           url,
-          conversationId: conversationId
-            ? conversationId.toString()
-            : undefined,
+          conversationId:
+            conversationId
+              ? conversationId.toString()
+              : undefined,
           tag:
             tag ||
             `cochat-${type}-${Date.now()}`,
@@ -102,31 +201,53 @@ const notifyMessageRecipient = async ({
 };
 
 /*
-  GET /api/messages/:conversationId
-
-  Get all messages belonging to a conversation.
+|--------------------------------------------------------------------------
+| GET /api/messages/:conversationId
+|--------------------------------------------------------------------------
+|
+| Paginated message history.
+|
+| Query:
+|
+|   ?limit=30
+|   ?before=<cursor>
+|
+| Behaviour:
+|
+|   First request:
+|     returns newest 30 messages.
+|
+|   Next request:
+|     returns 30 messages older than cursor.
+|
+| Response messages are returned oldest -> newest
+| inside the requested page so the frontend can
+| render naturally.
+|
+|--------------------------------------------------------------------------
 */
+
 router.get(
   "/:conversationId",
   protect,
   async (req, res) => {
     try {
-      const { conversationId } = req.params;
+      const {
+        conversationId,
+      } = req.params;
 
       if (
-        !mongoose.Types.ObjectId.isValid(
+        !isValidObjectId(
           conversationId
         )
       ) {
         return res.status(400).json({
           success: false,
-          message: "Invalid conversation ID.",
+          message:
+            "Invalid conversation ID.",
         });
       }
 
-      /*
-        Only members can read the conversation.
-      */
       const conversation =
         await getConversationForUser(
           conversationId,
@@ -141,21 +262,159 @@ router.get(
         });
       }
 
-      const messages =
-        await Message.find({
-          conversation: conversationId,
-        })
+      /*
+        Limit is intentionally capped.
+
+        This prevents a client from requesting
+        thousands of messages in one HTTP request.
+      */
+      const requestedLimit =
+        Number.parseInt(
+          req.query.limit,
+          10
+        );
+
+      const limit =
+        Number.isFinite(
+          requestedLimit
+        )
+          ? Math.min(
+              Math.max(
+                requestedLimit,
+                1
+              ),
+              100
+            )
+          : 30;
+
+      const cursor =
+        decodeCursor(
+          req.query.before
+        );
+
+      if (
+        req.query.before &&
+        !cursor
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Invalid message cursor.",
+        });
+      }
+
+      /*
+        Build cursor query.
+
+        We use createdAt + _id together so two messages
+        with the same timestamp do not create gaps.
+      */
+      const query = {
+        conversation:
+          conversationId,
+      };
+
+      if (cursor) {
+        query.$or = [
+          {
+            createdAt: {
+              $lt:
+                cursor.createdAt,
+            },
+          },
+          {
+            createdAt:
+              cursor.createdAt,
+            _id: {
+              $lt:
+                cursor.id,
+            },
+          },
+        ];
+      }
+
+      /*
+        Fetch one extra message.
+
+        If we receive limit + 1, there are older
+        messages remaining.
+      */
+      const fetchedMessages =
+        await Message.find(query)
           .populate(
             "sender",
             "username avatar"
           )
           .sort({
-            createdAt: 1,
-          });
+            createdAt: -1,
+            _id: -1,
+          })
+          .limit(limit + 1)
+          .lean();
+
+      const hasMore =
+        fetchedMessages.length >
+        limit;
+
+      const pageMessages =
+        hasMore
+          ? fetchedMessages.slice(
+              0,
+              limit
+            )
+          : fetchedMessages;
+
+      /*
+        We fetched newest -> oldest for efficient
+        pagination.
+
+        Frontend wants oldest -> newest.
+      */
+      pageMessages.reverse();
+
+      /*
+        The oldest message in this page becomes
+        the cursor for the next request.
+      */
+      const oldestMessage =
+        pageMessages[0] || null;
+
+      const nextCursor =
+        hasMore && oldestMessage
+          ? encodeCursor(
+              oldestMessage
+            )
+          : null;
+
+      /*
+        Make sure the conversation has participant
+        read-state entries.
+
+        This also backfills conversations created
+        before Phase 2.
+      */
+      conversation.ensureParticipantStates();
+
+      /*
+        We don't need to save if nothing changed,
+        but old conversations may not have states.
+      */
+      if (
+        conversation.isModified(
+          "participantStates"
+        )
+      ) {
+        await conversation.save();
+      }
 
       return res.status(200).json({
         success: true,
-        messages,
+        messages: pageMessages,
+        pagination: {
+          limit,
+          hasMore,
+          nextCursor,
+        },
       });
     } catch (error) {
       console.error(
@@ -173,13 +432,19 @@ router.get(
 );
 
 /*
-  POST /api/messages
-
-  Send a message to either:
-
-  - a direct conversation
-  - a group conversation
+|--------------------------------------------------------------------------
+| POST /api/messages
+|--------------------------------------------------------------------------
+|
+| Send a message.
+|
+| Supports:
+|   - direct conversations
+|   - group conversations
+|
+|--------------------------------------------------------------------------
 */
+
 router.post(
   "/",
   protect,
@@ -191,11 +456,10 @@ router.post(
       } = req.body;
 
       const cleanText =
-        text?.trim();
+        typeof text === "string"
+          ? text.trim()
+          : "";
 
-      /*
-        Basic validation.
-      */
       if (
         !conversationId ||
         !cleanText
@@ -208,7 +472,7 @@ router.post(
       }
 
       if (
-        !mongoose.Types.ObjectId.isValid(
+        !isValidObjectId(
           conversationId
         )
       ) {
@@ -227,10 +491,6 @@ router.post(
         });
       }
 
-      /*
-        Find conversation where the
-        current user is a participant.
-      */
       const conversation =
         await getConversationForUser(
           conversationId,
@@ -246,15 +506,62 @@ router.post(
       }
 
       /*
-      =====================================================
-        GROUP MESSAGE
-      =====================================================
+      ==========================================================
+      DIRECT MESSAGE
+      ==========================================================
       */
+
       if (
-        conversation.type === "group"
+        conversation.type ===
+        "direct"
       ) {
+        const otherParticipant =
+          conversation.participants.find(
+            (participant) =>
+              participant.toString() !==
+              req.user._id.toString()
+          );
+
+        if (!otherParticipant) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Unable to determine message recipient.",
+          });
+        }
+
         /*
-          Create message.
+          Block safety check.
+        */
+        const blocked =
+          await Block.findOne({
+            $or: [
+              {
+                blocker:
+                  req.user._id,
+                blocked:
+                  otherParticipant,
+              },
+              {
+                blocker:
+                  otherParticipant,
+                blocked:
+                  req.user._id,
+              },
+            ],
+          });
+
+        if (blocked) {
+          return res.status(403).json({
+            success: false,
+            message:
+              "You cannot message this user.",
+          });
+        }
+
+        /*
+          Create message with a receipt for
+          the other participant.
         */
         const message =
           await Message.create({
@@ -264,20 +571,24 @@ router.post(
               req.user._id,
             text:
               cleanText,
+            receipts:
+              buildReceipts(
+                conversation.participants,
+                req.user._id
+              ),
           });
 
-        /*
-          Update last message.
-        */
         conversation.lastMessage =
           message._id;
 
+        /*
+          Ensure participant state exists for
+          this conversation.
+        */
+        conversation.ensureParticipantStates();
+
         await conversation.save();
 
-        /*
-          Populate sender before sending
-          the message to clients.
-        */
         const populatedMessage =
           await Message.findById(
             message._id
@@ -287,7 +598,7 @@ router.post(
           );
 
         /*
-          Emit real-time group message.
+          Real-time message.
         */
         const io =
           req.app.get("io");
@@ -299,46 +610,58 @@ router.post(
             "new-message",
             populatedMessage
           );
+
+          /*
+            Update conversation lists for every
+            participant.
+
+            This allows the sidebar to move the
+            conversation to the top immediately.
+          */
+          for (
+            const participant
+            of conversation.participants
+          ) {
+            io.to(
+              `user:${participant.toString()}`
+            ).emit(
+              "conversation:updated",
+              {
+                conversationId:
+                  conversationId.toString(),
+                lastMessage:
+                  populatedMessage,
+                updatedAt:
+                  conversation.updatedAt,
+              }
+            );
+          }
         }
 
         /*
-          Notify every group member
-          except the sender.
+          Notification + push.
         */
-        const recipients =
-          conversation.participants.filter(
-            (participant) =>
-              participant.toString() !==
-              req.user._id.toString()
-          );
-
-        for (
-          const recipient
-          of recipients
-        ) {
-          await notifyMessageRecipient({
-            req,
-            recipient,
-            actor:
-              req.user._id,
-            type:
-              "group-message",
-            title:
-              conversation.name ||
-              "CoChat group",
-            body:
-              `@${
-                req.user.username ||
-                "Someone"
-              }: ${cleanText}`,
-            url:
-              `/groups/${conversationId}`,
-            conversationId:
-              conversationId,
-            tag:
-              `group-message-${conversationId}`,
-          });
-        }
+        await notifyMessageRecipient({
+          req,
+          recipient:
+            otherParticipant,
+          actor:
+            req.user._id,
+          type:
+            "message",
+          title:
+            `@${
+              req.user.username ||
+              "Someone"
+            }`,
+          body:
+            cleanText,
+          url:
+            `/messages/${conversationId}`,
+          conversationId,
+          tag:
+            `message-${conversationId}`,
+        });
 
         return res.status(201).json({
           success: true,
@@ -348,62 +671,11 @@ router.post(
       }
 
       /*
-      =====================================================
-        DIRECT MESSAGE
-      =====================================================
+      ==========================================================
+      GROUP MESSAGE
+      ==========================================================
       */
 
-      const otherParticipant =
-        conversation.participants.find(
-          (participant) =>
-            participant.toString() !==
-            req.user._id.toString()
-        );
-
-      /*
-        Safety check.
-      */
-      if (!otherParticipant) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Unable to determine message recipient.",
-        });
-      }
-
-      /*
-        Check whether either user has
-        blocked the other.
-      */
-      const blocked =
-        await Block.findOne({
-          $or: [
-            {
-              blocker:
-                req.user._id,
-              blocked:
-                otherParticipant,
-            },
-            {
-              blocker:
-                otherParticipant,
-              blocked:
-                req.user._id,
-            },
-          ],
-        });
-
-      if (blocked) {
-        return res.status(403).json({
-          success: false,
-          message:
-            "You cannot message this user.",
-        });
-      }
-
-      /*
-        Create direct message.
-      */
       const message =
         await Message.create({
           conversation:
@@ -412,19 +684,20 @@ router.post(
             req.user._id,
           text:
             cleanText,
+          receipts:
+            buildReceipts(
+              conversation.participants,
+              req.user._id
+            ),
         });
 
-      /*
-        Update last message.
-      */
       conversation.lastMessage =
         message._id;
 
+      conversation.ensureParticipantStates();
+
       await conversation.save();
 
-      /*
-        Populate sender.
-      */
       const populatedMessage =
         await Message.findById(
           message._id
@@ -433,9 +706,6 @@ router.post(
           "username avatar"
         );
 
-      /*
-        Emit real-time message.
-      */
       const io =
         req.app.get("io");
 
@@ -446,33 +716,66 @@ router.post(
           "new-message",
           populatedMessage
         );
+
+        /*
+          Synchronize conversation lists.
+        */
+        for (
+          const participant
+          of conversation.participants
+        ) {
+          io.to(
+            `user:${participant.toString()}`
+          ).emit(
+            "conversation:updated",
+            {
+              conversationId:
+                conversationId.toString(),
+              lastMessage:
+                populatedMessage,
+              updatedAt:
+                conversation.updatedAt,
+            }
+          );
+        }
       }
 
       /*
-        Create notification + push.
+        Notify all group members except sender.
       */
-      await notifyMessageRecipient({
-        req,
-        recipient:
-          otherParticipant,
-        actor:
-          req.user._id,
-        type:
-          "message",
-        title:
-          `@${
-            req.user.username ||
-            "Someone"
-          }`,
-        body:
-          cleanText,
-        url:
-          `/messages/${conversationId}`,
-        conversationId:
+      const recipients =
+        conversation.participants.filter(
+          (participant) =>
+            participant.toString() !==
+            req.user._id.toString()
+        );
+
+      for (
+        const recipient
+        of recipients
+      ) {
+        await notifyMessageRecipient({
+          req,
+          recipient,
+          actor:
+            req.user._id,
+          type:
+            "group-message",
+          title:
+            conversation.name ||
+            "CoChat group",
+          body:
+            `@${
+              req.user.username ||
+              "Someone"
+            }: ${cleanText}`,
+          url:
+            `/groups/${conversationId}`,
           conversationId,
-        tag:
-          `message-${conversationId}`,
-      });
+          tag:
+            `group-message-${conversationId}`,
+        });
+      }
 
       return res.status(201).json({
         success: true,
