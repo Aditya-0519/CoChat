@@ -1,24 +1,39 @@
-import { API_BASE_URL } from "./apiConfig";
+import {
+  API_BASE_URL,
+} from "./apiConfig";
 
-const API_URL = `${API_BASE_URL}/connections`;
 
-async function request(path, options = {}) {
-  const response = await fetch(
-    `${API_URL}${path}`,
-    {
-      credentials: "include",
-      headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
-      },
-      ...options,
-    }
-  );
+const API_URL =
+  `${API_BASE_URL}/connections`;
+
+
+async function request(
+  path,
+  options = {}
+) {
+  const response =
+    await fetch(
+      `${API_URL}${path}`,
+      {
+        credentials: "include",
+
+        headers: {
+          "Content-Type":
+            "application/json",
+
+          ...(options.headers || {}),
+        },
+
+        ...options,
+      }
+    );
+
 
   const data =
-    await response.json().catch(
-      () => ({})
-    );
+    await response
+      .json()
+      .catch(() => ({}));
+
 
   if (!response.ok) {
     throw new Error(
@@ -27,11 +42,26 @@ async function request(path, options = {}) {
     );
   }
 
+
   return data;
 }
 
+
+/*
+  ============================================================
+  ACCEPTED CONNECTIONS
+  ============================================================
+*/
+
 export const getConnections = () =>
   request("/");
+
+
+/*
+  ============================================================
+  CONNECTION STATUS
+  ============================================================
+*/
 
 export const getConnectionStatus = (
   userId
@@ -39,6 +69,13 @@ export const getConnectionStatus = (
   request(
     `/status/${userId}`
   );
+
+
+/*
+  ============================================================
+  SEND CONNECTION REQUEST
+  ============================================================
+*/
 
 export const sendConnectionRequest = (
   userId
@@ -50,35 +87,69 @@ export const sendConnectionRequest = (
     }
   );
 
-export const getConnectionRequests =
-  () =>
-    request("/requests");
+
+/*
+  ============================================================
+  INCOMING CONNECTION REQUESTS
+  ============================================================
+*/
+
+export const getConnectionRequests = () =>
+  request("/requests");
+
+
+/*
+  ============================================================
+  SENT CONNECTION REQUESTS
+  ============================================================
+*/
 
 export const getSentConnectionRequests =
   () =>
-    request("/requests/sent");
-
-export const getConnectionRequestCount =
-  () =>
-    request("/requests/count");
-
-export const acceptConnectionRequest =
-  (connectionId) =>
     request(
-      `/${connectionId}/accept`,
-      {
-        method: "PATCH",
-      }
+      "/requests/sent"
     );
 
-export const rejectConnectionRequest =
-  (connectionId) =>
-    request(
-      `/${connectionId}/reject`,
-      {
-        method: "PATCH",
-      }
-    );
+
+/*
+  ============================================================
+  ACCEPT CONNECTION REQUEST
+  ============================================================
+*/
+
+export const acceptConnectionRequest = (
+  connectionId
+) =>
+  request(
+    `/${connectionId}/accept`,
+    {
+      method: "PATCH",
+    }
+  );
+
+
+/*
+  ============================================================
+  REJECT CONNECTION REQUEST
+  ============================================================
+*/
+
+export const rejectConnectionRequest = (
+  connectionId
+) =>
+  request(
+    `/${connectionId}/reject`,
+    {
+      method: "PATCH",
+    }
+  );
+
+
+/*
+  ============================================================
+  REMOVE CONNECTION
+  ============================================================
+*/
 
 export const removeConnection = (
   userId

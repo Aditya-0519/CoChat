@@ -8858,6 +8858,35 @@ h1 span {
   box-shadow: 0 4px 10px rgba(99, 102, 241, 0.25);
 }
 
+.app-request-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  min-width: 18px;
+  height: 18px;
+
+  padding: 0 5px;
+
+  border-radius: 999px;
+
+  background: #6366f1;
+  color: #ffffff;
+
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+
+  box-shadow:
+    0 4px 10px rgba(99, 102, 241, 0.25);
+}
+
+@media (max-width: 700px) {
+  .app-request-badge {
+    display: inline-flex !important;
+  }
+}
+
 @media (max-width: 700px) {
   .app-navbar-links span {
     display: none;
