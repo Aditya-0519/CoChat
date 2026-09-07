@@ -4,7 +4,6 @@ const mongoose = require("mongoose");
 const Connection = require("../models/Connection");
 const User = require("../models/User");
 const Block = require("../models/Block");
-
 const protect = require("../middleware/authMiddleware");
 
 const {
@@ -13,11 +12,6 @@ const {
 } = require("../services/notificationService");
 
 const router = express.Router();
-
-
-// ============================================================
-// HELPERS
-// ============================================================
 
 const pairFilter = (userId, otherUserId) => ({
   $or: [
@@ -32,29 +26,11 @@ const pairFilter = (userId, otherUserId) => ({
   ],
 });
 
+/*
+  GET /api/connections
 
-const areBlocked = async (userA, userB) => {
-  const block = await Block.findOne({
-    $or: [
-      {
-        blocker: userA,
-        blocked: userB,
-      },
-      {
-        blocker: userB,
-        blocked: userA,
-      },
-    ],
-  });
-
-  return Boolean(block);
-};
-
-
-// ============================================================
-// GET ALL ACCEPTED CONNECTIONS
-// ============================================================
-
+  Get all accepted connections for the current user.
+*/
 router.get("/", protect, async (req, res) => {
   try {
     const connections = await Connection.find({
@@ -81,7 +57,7 @@ router.get("/", protect, async (req, res) => {
         updatedAt: -1,
       });
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       connections,
     });
@@ -93,17 +69,17 @@ router.get("/", protect, async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message:
-        "Unable to load connections.",
+      message: "Unable to load connections.",
     });
   }
 });
 
+/*
+  GET /api/connections/status/:userId
 
-// ============================================================
-// GET CONNECTION STATUS
-// ============================================================
-
+  Get the connection status between
+  the current user and another user.
+*/
 router.get(
   "/status/:userId",
   protect,
@@ -111,15 +87,10 @@ router.get(
     try {
       const { userId } = req.params;
 
-      if (
-        !mongoose.Types.ObjectId.isValid(
-          userId
-        )
-      ) {
+      if (!mongoose.Types.ObjectId.isValid(userId)) {
         return res.status(400).json({
           success: false,
-          message:
-            "Invalid user ID.",
+          message: "Invalid user ID.",
         });
       }
 
@@ -132,7 +103,7 @@ router.get(
         );
 
       if (!connection) {
-        return res.status(200).json({
+        return res.json({
           success: true,
           status: "none",
           direction: null,
@@ -140,21 +111,19 @@ router.get(
         });
       }
 
-      const currentUserId =
+      const currentId =
         req.user._id.toString();
 
       const isRequester =
         connection.requester.toString() ===
-        currentUserId;
+        currentId;
 
-      return res.status(200).json({
+      return res.json({
         success: true,
-        status:
-          connection.status,
-        direction:
-          isRequester
-            ? "outgoing"
-            : "incoming",
+        status: connection.status,
+        direction: isRequester
+          ? "outgoing"
+          : "incoming",
         connection,
       });
     } catch (error) {
@@ -172,11 +141,11 @@ router.get(
   }
 );
 
+/*
+  POST /api/connections/request/:userId
 
-// ============================================================
-// SEND CONNECTION REQUEST
-// ============================================================
-
+  Send a connection request.
+*/
 router.post(
   "/request/:userId",
   protect,
@@ -191,8 +160,7 @@ router.post(
       ) {
         return res.status(400).json({
           success: false,
-          message:
-            "Invalid user ID.",
+          message: "Invalid user ID.",
         });
       }
 
@@ -208,26 +176,35 @@ router.post(
       }
 
       const targetUser =
-        await User.findById(
-          userId
-        ).select(
+        await User.findById(userId).select(
           "username avatar"
         );
 
       if (!targetUser) {
         return res.status(404).json({
           success: false,
-          message:
-            "User not found.",
+          message: "User not found.",
         });
       }
 
-      if (
-        await areBlocked(
-          req.user._id,
-          userId
-        )
-      ) {
+      /*
+        Block check.
+      */
+      const blocked =
+        await Block.findOne({
+          $or: [
+            {
+              blocker: req.user._id,
+              blocked: userId,
+            },
+            {
+              blocker: userId,
+              blocked: req.user._id,
+            },
+          ],
+        });
+
+      if (blocked) {
         return res.status(403).json({
           success: false,
           message:
@@ -243,20 +220,21 @@ router.post(
           )
         );
 
-      // --------------------------------------------------------
-      // EXISTING CONNECTION
-      // --------------------------------------------------------
-
+      /*
+        Existing relationship.
+      */
       if (connection) {
-        const currentUserId =
+        const currentId =
           req.user._id.toString();
 
-        // Already connected.
+        /*
+          Already connected.
+        */
         if (
           connection.status ===
           "accepted"
         ) {
-          return res.status(200).json({
+          return res.json({
             success: true,
             message:
               "You are already connected.",
@@ -264,14 +242,17 @@ router.post(
           });
         }
 
-        // Current user already sent it.
+        /*
+          Current user already sent
+          the pending request.
+        */
         if (
           connection.status ===
             "pending" &&
           connection.requester.toString() ===
-            currentUserId
+            currentId
         ) {
-          return res.status(200).json({
+          return res.json({
             success: true,
             message:
               "Connection request already sent.",
@@ -279,75 +260,24 @@ router.post(
           });
         }
 
-        // Other user sent one to us.
-        // Accept it instead of creating
-        // another connection.
+        /*
+          The other person already sent
+          a request to the current user.
+
+          Sending Connect back accepts it.
+        */
         if (
           connection.status ===
             "pending" &&
           connection.recipient.toString() ===
-            currentUserId
+            currentId
         ) {
           connection.status =
             "accepted";
 
           await connection.save();
 
-          // Notify original requester.
-          try {
-            await createNotification({
-              recipient:
-                connection.requester,
-              actor:
-                req.user._id,
-              type:
-                "connection-accepted",
-              title:
-                "Connection accepted",
-              body:
-                `@${req.user.username} accepted your connection request.`,
-              url:
-                "/discover",
-            });
-
-            await sendPushNotification(
-              connection.requester,
-              {
-                title:
-                  "Connection accepted",
-                body:
-                  `@${req.user.username} accepted your connection request.`,
-                type:
-                  "connection-accepted",
-                url:
-                  "/discover",
-              }
-            );
-          } catch (notificationError) {
-            console.error(
-              "Connection acceptance notification error:",
-              notificationError
-            );
-          }
-
-          const io =
-            req.app.get("io");
-
-          if (io) {
-            io.to(
-              `user:${connection.requester.toString()}`
-            ).emit(
-              "connection-accepted",
-              {
-                requesterId:
-                  connection.requester.toString(),
-                connectionId:
-                  connection._id.toString(),
-              }
-            );
-          }
-
-          return res.status(200).json({
+          return res.json({
             success: true,
             message:
               "Connection accepted.",
@@ -355,7 +285,9 @@ router.post(
           });
         }
 
-        // Re-use rejected connection.
+        /*
+          Reuse rejected relationship.
+        */
         connection.requester =
           req.user._id;
 
@@ -367,51 +299,18 @@ router.post(
 
         await connection.save();
       } else {
-        // ------------------------------------------------------
-        // NEW CONNECTION
-        // ------------------------------------------------------
-
         connection =
           await Connection.create({
             requester:
               req.user._id,
-            recipient:
-              userId,
-            status:
-              "pending",
+            recipient: userId,
+            status: "pending",
           });
       }
 
-      // ========================================================
-      // CREATE PERSISTENT IN-APP NOTIFICATION
-      // ========================================================
-
-      try {
-        await createNotification({
-          recipient:
-            userId,
-          actor:
-            req.user._id,
-          type:
-            "connection-request",
-          title:
-            "New connection request",
-          body:
-            `@${req.user.username} wants to connect with you.`,
-          url:
-            "/message-requests",
-        });
-      } catch (notificationError) {
-        console.error(
-          "Create connection notification error:",
-          notificationError
-        );
-      }
-
-      // ========================================================
-      // REAL-TIME CONNECTION REQUEST EVENT
-      // ========================================================
-
+      /*
+        Realtime connection request.
+      */
       const io =
         req.app.get("io");
 
@@ -423,34 +322,62 @@ router.post(
           {
             recipientId:
               userId.toString(),
+
             connectionId:
               connection._id.toString(),
           }
         );
       }
 
-      // ========================================================
-      // WEB PUSH
-      // ========================================================
+      /*
+        Persistent in-app notification.
 
+        This is important because the recipient
+        may not currently have the app open.
+      */
+      try {
+        await createNotification({
+          recipient: userId,
+          actor: req.user._id,
+          type: "connection-request",
+          title:
+            "New connection request",
+          body:
+            `@${req.user.username} wants to connect with you.`,
+          url:
+            "/message-requests",
+        });
+      } catch (notificationError) {
+        console.error(
+          "Connection in-app notification error:",
+          notificationError
+        );
+      }
+
+      /*
+        Web push notification.
+      */
       try {
         await sendPushNotification(
           userId,
           {
             title:
               "New connection request",
+
             body:
               `@${req.user.username} wants to connect with you.`,
+
             type:
               "connection-request",
+
             url:
               "/message-requests",
           }
         );
-      } catch (pushError) {
+      } catch (notificationError) {
         console.error(
           "Connection push notification error:",
-          pushError
+          notificationError
         );
       }
 
@@ -466,9 +393,7 @@ router.post(
         error
       );
 
-      if (
-        error?.code === 11000
-      ) {
+      if (error.code === 11000) {
         return res.status(409).json({
           success: false,
           message:
@@ -485,11 +410,11 @@ router.post(
   }
 );
 
+/*
+  GET /api/connections/requests
 
-// ============================================================
-// GET INCOMING CONNECTION REQUESTS
-// ============================================================
-
+  Get pending incoming connection requests.
+*/
 router.get(
   "/requests",
   protect,
@@ -497,26 +422,24 @@ router.get(
     try {
       const requests =
         await Connection.find({
-          recipient:
-            req.user._id,
-          status:
-            "pending",
+          recipient: req.user._id,
+          status: "pending",
         })
           .populate(
             "requester",
-            "username avatar bio college branch semester interests"
+            "username avatar bio college branch semester"
           )
           .sort({
             createdAt: -1,
           });
 
-      return res.status(200).json({
+      return res.json({
         success: true,
         requests,
       });
     } catch (error) {
       console.error(
-        "Get incoming connection requests error:",
+        "Get connection requests error:",
         error
       );
 
@@ -529,11 +452,12 @@ router.get(
   }
 );
 
+/*
+  GET /api/connections/requests/sent
 
-// ============================================================
-// GET SENT CONNECTION REQUESTS
-// ============================================================
-
+  Get connection requests sent by
+  the current user.
+*/
 router.get(
   "/requests/sent",
   protect,
@@ -541,18 +465,17 @@ router.get(
     try {
       const requests =
         await Connection.find({
-          requester:
-            req.user._id,
+          requester: req.user._id,
         })
           .populate(
             "recipient",
-            "username avatar bio college branch semester interests"
+            "username avatar bio college branch semester"
           )
           .sort({
             createdAt: -1,
           });
 
-      return res.status(200).json({
+      return res.json({
         success: true,
         requests,
       });
@@ -571,11 +494,12 @@ router.get(
   }
 );
 
+/*
+  GET /api/connections/requests/count
 
-// ============================================================
-// GET INCOMING CONNECTION REQUEST COUNT
-// ============================================================
-
+  Get the number of pending incoming
+  connection requests.
+*/
 router.get(
   "/requests/count",
   protect,
@@ -583,13 +507,11 @@ router.get(
     try {
       const count =
         await Connection.countDocuments({
-          recipient:
-            req.user._id,
-          status:
-            "pending",
+          recipient: req.user._id,
+          status: "pending",
         });
 
-      return res.status(200).json({
+      return res.json({
         success: true,
         count,
       });
@@ -608,22 +530,19 @@ router.get(
   }
 );
 
+/*
+  PATCH /api/connections/:id/accept
 
-// ============================================================
-// ACCEPT CONNECTION REQUEST
-// ============================================================
-
+  Accept a connection request.
+*/
 router.patch(
   "/:id/accept",
   protect,
   async (req, res) => {
     try {
-      const { id } =
-        req.params;
-
       if (
         !mongoose.Types.ObjectId.isValid(
-          id
+          req.params.id
         )
       ) {
         return res.status(400).json({
@@ -635,18 +554,16 @@ router.patch(
 
       const connection =
         await Connection.findOne({
-          _id: id,
-          recipient:
-            req.user._id,
-          status:
-            "pending",
+          _id: req.params.id,
+          recipient: req.user._id,
+          status: "pending",
         });
 
       if (!connection) {
         return res.status(404).json({
           success: false,
           message:
-            "Connection request not found or already handled.",
+            "Connection request not found.",
         });
       }
 
@@ -655,10 +572,49 @@ router.patch(
 
       await connection.save();
 
-      // ========================================================
-      // NOTIFY REQUESTER
-      // ========================================================
+      const io =
+        req.app.get("io");
 
+      if (io) {
+        /*
+          Tell requester that their request
+          was accepted.
+        */
+        io.to(
+          `user:${connection.requester.toString()}`
+        ).emit(
+          "connection-accepted",
+          {
+            requesterId:
+              connection.requester.toString(),
+
+            connectionId:
+              connection._id.toString(),
+          }
+        );
+
+        /*
+          Tell recipient to remove the
+          pending request badge.
+        */
+        io.to(
+          `user:${connection.recipient.toString()}`
+        ).emit(
+          "connection-request:updated",
+          {
+            connectionId:
+              connection._id.toString(),
+
+            status:
+              "accepted",
+          }
+        );
+      }
+
+      /*
+        Notify requester that the request
+        was accepted.
+      */
       try {
         await createNotification({
           recipient:
@@ -668,26 +624,12 @@ router.patch(
           type:
             "connection-accepted",
           title:
-            "Connection accepted",
+            "Connection request accepted",
           body:
             `@${req.user.username} accepted your connection request.`,
           url:
             "/discover",
         });
-
-        await sendPushNotification(
-          connection.requester,
-          {
-            title:
-              "Connection accepted",
-            body:
-              `@${req.user.username} accepted your connection request.`,
-            type:
-              "connection-accepted",
-            url:
-              "/discover",
-          }
-        );
       } catch (notificationError) {
         console.error(
           "Connection accepted notification error:",
@@ -695,40 +637,7 @@ router.patch(
         );
       }
 
-      // ========================================================
-      // REAL-TIME ACCEPT EVENT
-      // ========================================================
-
-      const io =
-        req.app.get("io");
-
-      if (io) {
-        io.to(
-          `user:${connection.requester.toString()}`
-        ).emit(
-          "connection-accepted",
-          {
-            requesterId:
-              connection.requester.toString(),
-            connectionId:
-              connection._id.toString(),
-          }
-        );
-
-        io.to(
-          `user:${connection.recipient.toString()}`
-        ).emit(
-          "connection-accepted",
-          {
-            requesterId:
-              connection.requester.toString(),
-            connectionId:
-              connection._id.toString(),
-          }
-        );
-      }
-
-      return res.status(200).json({
+      return res.json({
         success: true,
         message:
           "Connection accepted.",
@@ -749,22 +658,19 @@ router.patch(
   }
 );
 
+/*
+  PATCH /api/connections/:id/reject
 
-// ============================================================
-// REJECT CONNECTION REQUEST
-// ============================================================
-
+  Reject a connection request.
+*/
 router.patch(
   "/:id/reject",
   protect,
   async (req, res) => {
     try {
-      const { id } =
-        req.params;
-
       if (
         !mongoose.Types.ObjectId.isValid(
-          id
+          req.params.id
         )
       ) {
         return res.status(400).json({
@@ -776,18 +682,16 @@ router.patch(
 
       const connection =
         await Connection.findOne({
-          _id: id,
-          recipient:
-            req.user._id,
-          status:
-            "pending",
+          _id: req.params.id,
+          recipient: req.user._id,
+          status: "pending",
         });
 
       if (!connection) {
         return res.status(404).json({
           success: false,
           message:
-            "Connection request not found or already handled.",
+            "Connection request not found.",
         });
       }
 
@@ -796,11 +700,28 @@ router.patch(
 
       await connection.save();
 
-      return res.status(200).json({
+      const io =
+        req.app.get("io");
+
+      if (io) {
+        io.to(
+          `user:${connection.recipient.toString()}`
+        ).emit(
+          "connection-request:updated",
+          {
+            connectionId:
+              connection._id.toString(),
+
+            status:
+              "rejected",
+          }
+        );
+      }
+
+      return res.json({
         success: true,
         message:
           "Connection request declined.",
-        connection,
       });
     } catch (error) {
       console.error(
@@ -816,6 +737,5 @@ router.patch(
     }
   }
 );
-
 
 module.exports = router;

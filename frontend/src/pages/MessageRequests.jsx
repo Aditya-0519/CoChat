@@ -4,7 +4,6 @@ import {
   Clock3,
   Inbox,
   Loader2,
-  MessageCircle,
   Send,
   X,
 } from "lucide-react";
@@ -19,11 +18,11 @@ import {
 } from "react-router-dom";
 
 import {
-  acceptMessageRequest,
-  declineMessageRequest,
-  getMessageRequests,
-  getSentMessageRequests,
-} from "../services/conversationService";
+  acceptConnectionRequest,
+  getConnectionRequests,
+  getSentConnectionRequests,
+  rejectConnectionRequest,
+} from "../services/connectionService";
 
 import "./MessageRequests.css";
 
@@ -40,7 +39,11 @@ function formatDate(date) {
 
   const value = new Date(date);
 
-  if (Number.isNaN(value.getTime())) {
+  if (
+    Number.isNaN(
+      value.getTime()
+    )
+  ) {
     return "";
   }
 
@@ -51,7 +54,9 @@ function formatDate(date) {
     value.getTime();
 
   const minute =
-    Math.floor(diff / 60000);
+    Math.floor(
+      diff / 60000
+    );
 
   if (minute < 1) {
     return "Just now";
@@ -62,14 +67,18 @@ function formatDate(date) {
   }
 
   const hour =
-    Math.floor(minute / 60);
+    Math.floor(
+      minute / 60
+    );
 
   if (hour < 24) {
     return `${hour}h ago`;
   }
 
   const day =
-    Math.floor(hour / 24);
+    Math.floor(
+      hour / 24
+    );
 
   if (day < 7) {
     return `${day}d ago`;
@@ -116,10 +125,15 @@ function UserAvatar({
 
 
 function MessageRequests() {
-  const navigate = useNavigate();
+  const navigate =
+    useNavigate();
 
-  const [activeTab, setActiveTab] =
-    useState("incoming");
+  const [
+    activeTab,
+    setActiveTab,
+  ] = useState(
+    "incoming"
+  );
 
   const [
     incomingRequests,
@@ -147,63 +161,37 @@ function MessageRequests() {
   ] = useState("");
 
 
-const fetchRequests = async () => {
-  const [
-    incomingData,
-    sentData,
-  ] = await Promise.all([
-    getMessageRequests(),
-    getSentMessageRequests(),
-  ]);
+  const fetchRequests =
+    async () => {
+      const [
+        incomingData,
+        sentData,
+      ] =
+        await Promise.all([
+          getConnectionRequests(),
+          getSentConnectionRequests(),
+        ]);
 
-  return {
-    incoming:
-      incomingData?.requests || [],
-    sent:
-      sentData?.requests || [],
-  };
-};
+      return {
+        incoming:
+          incomingData?.requests ||
+          [],
 
-const loadRequests = async () => {
-  try {
-    setLoading(true);
-    setError("");
+        sent:
+          sentData?.requests ||
+          [],
+      };
+    };
 
-    const data =
-      await fetchRequests();
 
-    setIncomingRequests(
-      data.incoming
-    );
-
-    setSentRequests(
-      data.sent
-    );
-  } catch (requestError) {
-    console.error(
-      "Unable to load message requests:",
-      requestError
-    );
-
-    setError(
-      requestError?.message ||
-        "Unable to load message requests."
-    );
-  } finally {
-    setLoading(false);
-  }
-};
-
-useEffect(() => {
-  let mounted = true;
-
-  const loadInitialRequests =
+  const loadRequests =
     async () => {
       try {
+        setLoading(true);
+        setError("");
+
         const data =
           await fetchRequests();
-
-        if (!mounted) return;
 
         setIncomingRequests(
           data.incoming
@@ -212,101 +200,87 @@ useEffect(() => {
         setSentRequests(
           data.sent
         );
-      } catch (requestError) {
-        if (!mounted) return;
-
+      } catch (
+        requestError
+      ) {
         console.error(
-          "Unable to load message requests:",
+          "Unable to load connection requests:",
           requestError
         );
 
         setError(
           requestError?.message ||
-            "Unable to load message requests."
+            "Unable to load connection requests."
         );
       } finally {
-        if (mounted) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     };
 
-  loadInitialRequests();
 
-  return () => {
-    mounted = false;
-  };
-}, []);
+  useEffect(() => {
+    let mounted = true;
+
+    const loadInitialRequests =
+      async () => {
+        try {
+          const data =
+            await fetchRequests();
+
+          if (!mounted) {
+            return;
+          }
+
+          setIncomingRequests(
+            data.incoming
+          );
+
+          setSentRequests(
+            data.sent
+          );
+        } catch (
+          requestError
+        ) {
+          if (!mounted) {
+            return;
+          }
+
+          console.error(
+            "Unable to load connection requests:",
+            requestError
+          );
+
+          setError(
+            requestError?.message ||
+              "Unable to load connection requests."
+          );
+        } finally {
+          if (mounted) {
+            setLoading(false);
+          }
+        }
+      };
+
+    loadInitialRequests();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
 
   const handleAccept =
-    async (requestId) => {
+    async (
+      requestId
+    ) => {
       try {
-        setActionId(requestId);
-        setError("");
-
-        const data =
-          await acceptMessageRequest(
-            requestId
-          );
-
-        /*
-          Remove the request from
-          the incoming list immediately.
-        */
-       setIncomingRequests(
-  (current) =>
-    current.filter(
-      (request) =>
-        request._id !== requestId
-    )
-);
-
-        /*
-          Backend returns the newly
-          created direct conversation.
-        */
-        const conversation =
-          data?.conversation;
-
-        if (
-          conversation?._id
-        ) {
-          navigate(
-            `/messages/${conversation._id}`
-          );
-
-          return;
-        }
-
-        /*
-          Fallback if conversation
-          wasn't returned for some reason.
-        */
-        await loadRequests();
-      } catch (requestError) {
-        console.error(
-          "Accept message request error:",
-          requestError
+        setActionId(
+          requestId
         );
 
-        setError(
-          requestError?.message ||
-            "Unable to accept message request."
-        );
-      } finally {
-        setActionId(null);
-      }
-    };
-
-
-  const handleDecline =
-    async (requestId) => {
-      try {
-        setActionId(requestId);
         setError("");
 
-        await declineMessageRequest(
+        await acceptConnectionRequest(
           requestId
         );
 
@@ -318,15 +292,58 @@ useEffect(() => {
                 requestId
             )
         );
-      } catch (requestError) {
+      } catch (
+        requestError
+      ) {
         console.error(
-          "Decline message request error:",
+          "Accept connection request error:",
           requestError
         );
 
         setError(
           requestError?.message ||
-            "Unable to decline message request."
+            "Unable to accept connection request."
+        );
+      } finally {
+        setActionId(null);
+      }
+    };
+
+
+  const handleDecline =
+    async (
+      requestId
+    ) => {
+      try {
+        setActionId(
+          requestId
+        );
+
+        setError("");
+
+        await rejectConnectionRequest(
+          requestId
+        );
+
+        setIncomingRequests(
+          (current) =>
+            current.filter(
+              (request) =>
+                request._id !==
+                requestId
+            )
+        );
+      } catch (
+        requestError
+      ) {
+        console.error(
+          "Decline connection request error:",
+          requestError
+        );
+
+        setError(
+          requestError?.message ||
+            "Unable to decline connection request."
         );
       } finally {
         setActionId(null);
@@ -351,10 +368,7 @@ useEffect(() => {
 
   return (
     <div className="message-requests-page">
-
       <div className="message-requests-shell">
-
-        {/* Header */}
 
         <header className="message-requests-header">
 
@@ -364,7 +378,9 @@ useEffect(() => {
               type="button"
               className="message-requests-back"
               onClick={() =>
-                navigate("/messages")
+                navigate(
+                  "/messages"
+                )
               }
               aria-label="Back to messages"
             >
@@ -374,33 +390,32 @@ useEffect(() => {
             </button>
 
             <div>
+
               <p className="message-requests-eyebrow">
                 Your inbox
               </p>
 
               <h1>
-                Message requests
+                Connection requests
               </h1>
 
               <p>
-                Connect with people
-                before starting a
-                conversation.
+                Accept people you want
+                to connect with before chatting.
               </p>
+
             </div>
 
           </div>
 
           <div className="message-requests-header-icon">
-            <MessageCircle
+            <Inbox
               size={23}
             />
           </div>
 
         </header>
 
-
-        {/* Tabs */}
 
         <div className="message-requests-tabs">
 
@@ -418,7 +433,9 @@ useEffect(() => {
               )
             }
           >
-            <Inbox size={17} />
+            <Inbox
+              size={17}
+            />
 
             <span>
               Incoming
@@ -433,6 +450,7 @@ useEffect(() => {
                   : incomingRequests.length}
               </span>
             )}
+
           </button>
 
 
@@ -445,10 +463,14 @@ useEffect(() => {
                 : "message-request-tab"
             }
             onClick={() =>
-              setActiveTab("sent")
+              setActiveTab(
+                "sent"
+              )
             }
           >
-            <Send size={17} />
+            <Send
+              size={17}
+            />
 
             <span>
               Sent
@@ -463,15 +485,15 @@ useEffect(() => {
                   : pendingSentRequests.length}
               </span>
             )}
+
           </button>
 
         </div>
 
 
-        {/* Error */}
-
         {error && (
           <div className="message-requests-error">
+
             <span>
               {error}
             </span>
@@ -484,11 +506,10 @@ useEffect(() => {
             >
               Try again
             </button>
+
           </div>
         )}
 
-
-        {/* Loading */}
 
         {loading ? (
           <div className="message-requests-loading">
@@ -503,35 +524,31 @@ useEffect(() => {
             </p>
 
           </div>
+        ) : activeTab ===
+          "incoming" ? (
+          <IncomingRequests
+            requests={
+              incomingRequests
+            }
+            actionId={
+              actionId
+            }
+            onAccept={
+              handleAccept
+            }
+            onDecline={
+              handleDecline
+            }
+          />
         ) : (
-          <>
-            {activeTab ===
-            "incoming" ? (
-              <IncomingRequests
-                requests={
-                  incomingRequests
-                }
-                actionId={
-                  actionId
-                }
-                onAccept={
-                  handleAccept
-                }
-                onDecline={
-                  handleDecline
-                }
-              />
-            ) : (
-              <SentRequests
-                pendingRequests={
-                  pendingSentRequests
-                }
-                handledRequests={
-                  handledSentRequests
-                }
-              />
-            )}
-          </>
+          <SentRequests
+            pendingRequests={
+              pendingSentRequests
+            }
+            handledRequests={
+              handledSentRequests
+            }
+          />
         )}
 
       </div>
@@ -542,7 +559,7 @@ useEffect(() => {
 
 /*
   ============================================================
-  INCOMING REQUESTS
+  INCOMING CONNECTION REQUESTS
   ============================================================
 */
 
@@ -556,10 +573,12 @@ function IncomingRequests({
     return (
       <EmptyState
         icon={
-          <Inbox size={25} />
+          <Inbox
+            size={25}
+          />
         }
-        title="No message requests"
-        description="When someone wants to start a conversation with you, their request will appear here."
+        title="No connection requests"
+        description="When someone sends you a connection request, it will appear here."
       />
     );
   }
@@ -569,15 +588,17 @@ function IncomingRequests({
     <div className="message-request-list">
 
       <div className="message-request-list-heading">
+
         <div>
+
           <h2>
-            People who want to chat
+            People who want to connect
           </h2>
 
           <p>
-            Review their message
-            before accepting.
+            Review their profile before accepting.
           </p>
+
         </div>
 
         <span>
@@ -587,13 +608,14 @@ function IncomingRequests({
             ? "request"
             : "requests"}
         </span>
+
       </div>
 
 
       {requests.map(
         (request) => {
-          const sender =
-            request.sender;
+          const requester =
+            request.requester;
 
           const busy =
             actionId ===
@@ -610,7 +632,9 @@ function IncomingRequests({
               <div className="message-request-card-top">
 
                 <UserAvatar
-                  user={sender}
+                  user={
+                    requester
+                  }
                   size="large"
                 />
 
@@ -620,7 +644,7 @@ function IncomingRequests({
 
                     <h3>
                       @
-                      {sender?.username ||
+                      {requester?.username ||
                         "unknown"}
                     </h3>
 
@@ -635,15 +659,15 @@ function IncomingRequests({
 
                   <div className="message-request-meta">
 
-                    {sender?.college && (
+                    {requester?.college && (
                       <span>
                         {
-                          sender.college
+                          requester.college
                         }
                       </span>
                     )}
 
-                    {sender?.branch && (
+                    {requester?.branch && (
                       <>
                         <i>
                           •
@@ -651,13 +675,13 @@ function IncomingRequests({
 
                         <span>
                           {
-                            sender.branch
+                            requester.branch
                           }
                         </span>
                       </>
                     )}
 
-                    {sender?.semester && (
+                    {requester?.semester && (
                       <>
                         <i>
                           •
@@ -666,7 +690,7 @@ function IncomingRequests({
                         <span>
                           Sem{" "}
                           {
-                            sender.semester
+                            requester.semester
                           }
                         </span>
                       </>
@@ -679,21 +703,30 @@ function IncomingRequests({
               </div>
 
 
-              {sender?.bio && (
+              {requester?.bio && (
                 <p className="message-request-bio">
-                  {sender.bio}
+                  {
+                    requester.bio
+                  }
                 </p>
               )}
 
 
               <div className="message-request-message">
 
-                <MessageCircle
+                <Inbox
                   size={16}
                 />
 
                 <p>
-                  {request.text}
+                  <strong>
+                    @
+                    {
+                      requester?.username ||
+                      "Someone"
+                    }
+                  </strong>{" "}
+                  wants to connect with you.
                 </p>
 
               </div>
@@ -704,7 +737,9 @@ function IncomingRequests({
                 <button
                   type="button"
                   className="message-request-decline"
-                  disabled={busy}
+                  disabled={
+                    busy
+                  }
                   onClick={() =>
                     onDecline(
                       request._id
@@ -729,7 +764,9 @@ function IncomingRequests({
                 <button
                   type="button"
                   className="message-request-accept"
-                  disabled={busy}
+                  disabled={
+                    busy
+                  }
                   onClick={() =>
                     onAccept(
                       request._id
@@ -747,7 +784,7 @@ function IncomingRequests({
                     />
                   )}
 
-                  Accept & Chat
+                  Accept
                 </button>
 
               </div>
@@ -764,7 +801,7 @@ function IncomingRequests({
 
 /*
   ============================================================
-  SENT REQUESTS
+  SENT CONNECTION REQUESTS
   ============================================================
 */
 
@@ -779,10 +816,12 @@ function SentRequests({
     return (
       <EmptyState
         icon={
-          <Send size={25} />
+          <Send
+            size={25}
+          />
         }
         title="No sent requests"
-        description="When you send someone a first-contact message, you'll be able to track it here."
+        description="Connection requests you send will appear here."
       />
     );
   }
@@ -796,19 +835,22 @@ function SentRequests({
         <div className="message-request-list-heading">
 
           <div>
+
             <h2>
-              Waiting for a reply
+              Waiting for a response
             </h2>
 
             <p>
               These people haven't
-              accepted your request
-              yet.
+              accepted your request yet.
             </p>
+
           </div>
 
           <span>
-            {pendingRequests.length}{" "}
+            {
+              pendingRequests.length
+            }{" "}
             pending
           </span>
 
@@ -867,7 +909,6 @@ function SentRequestCard({
   const status =
     request.status;
 
-
   return (
     <article
       className={
@@ -880,7 +921,9 @@ function SentRequestCard({
       <div className="message-request-card-top">
 
         <UserAvatar
-          user={recipient}
+          user={
+            recipient
+          }
           size="large"
         />
 
@@ -890,8 +933,10 @@ function SentRequestCard({
 
             <h3>
               @
-              {recipient?.username ||
-                "unknown"}
+              {
+                recipient?.username ||
+                "unknown"
+              }
             </h3>
 
             <span>
@@ -947,21 +992,10 @@ function SentRequestCard({
         </div>
 
         <RequestStatus
-          status={status}
+          status={
+            status
+          }
         />
-
-      </div>
-
-
-      <div className="message-request-message">
-
-        <MessageCircle
-          size={16}
-        />
-
-        <p>
-          {request.text}
-        </p>
 
       </div>
 
@@ -977,9 +1011,9 @@ function SentRequestCard({
           Waiting for @
           {
             recipient?.username ||
-              "user"
+            "user"
           }{" "}
-          to accept.
+          to respond.
 
         </div>
       )}
@@ -993,21 +1027,21 @@ function SentRequestCard({
             size={16}
           />
 
-          Request accepted.
+          Connection accepted.
 
         </div>
       )}
 
 
       {status ===
-        "declined" && (
+        "rejected" && (
         <div className="message-request-declined">
 
           <X
             size={16}
           />
 
-          Request declined.
+          Connection request declined.
 
         </div>
       )}
@@ -1026,38 +1060,47 @@ function RequestStatus({
   ) {
     return (
       <span className="message-request-status message-request-status-accepted">
-        <Check size={13} />
+
+        <Check
+          size={13}
+        />
+
         Accepted
+
       </span>
     );
   }
 
   if (
     status ===
-    "declined"
+    "rejected"
   ) {
     return (
       <span className="message-request-status message-request-status-declined">
-        <X size={13} />
+
+        <X
+          size={13}
+        />
+
         Declined
+
       </span>
     );
   }
 
   return (
     <span className="message-request-status message-request-status-pending">
-      <Clock3 size={13} />
+
+      <Clock3
+        size={13}
+      />
+
       Pending
+
     </span>
   );
 }
 
-
-/*
-  ============================================================
-  EMPTY STATE
-  ============================================================
-*/
 
 function EmptyState({
   icon,

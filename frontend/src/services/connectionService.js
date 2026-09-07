@@ -1,20 +1,14 @@
 import { API_BASE_URL } from "./apiConfig";
 
-const API_URL =
-  `${API_BASE_URL}/connections`;
+const API_URL = `${API_BASE_URL}/connections`;
 
-
-async function request(
-  path,
-  options = {}
-) {
+async function request(path, options = {}) {
   const response = await fetch(
     `${API_URL}${path}`,
     {
       credentials: "include",
       headers: {
-        "Content-Type":
-          "application/json",
+        "Content-Type": "application/json",
         ...(options.headers || {}),
       },
       ...options,
@@ -22,9 +16,9 @@ async function request(
   );
 
   const data =
-    await response
-      .json()
-      .catch(() => ({}));
+    await response.json().catch(
+      () => ({})
+    );
 
   if (!response.ok) {
     throw new Error(
@@ -36,18 +30,8 @@ async function request(
   return data;
 }
 
-
-// ============================================================
-// ACCEPTED CONNECTIONS
-// ============================================================
-
 export const getConnections = () =>
   request("/");
-
-
-// ============================================================
-// CONNECTION STATUS
-// ============================================================
 
 export const getConnectionStatus = (
   userId
@@ -55,11 +39,6 @@ export const getConnectionStatus = (
   request(
     `/status/${userId}`
   );
-
-
-// ============================================================
-// SEND CONNECTION REQUEST
-// ============================================================
 
 export const sendConnectionRequest = (
   userId
@@ -71,71 +50,35 @@ export const sendConnectionRequest = (
     }
   );
 
-
-// ============================================================
-// INCOMING CONNECTION REQUESTS
-// ============================================================
-
 export const getConnectionRequests =
   () =>
     request("/requests");
 
-
-// ============================================================
-// SENT CONNECTION REQUESTS
-// ============================================================
-
 export const getSentConnectionRequests =
   () =>
-    request(
-      "/requests/sent"
-    );
-
-
-// ============================================================
-// CONNECTION REQUEST COUNT
-// ============================================================
+    request("/requests/sent");
 
 export const getConnectionRequestCount =
   () =>
+    request("/requests/count");
+
+export const acceptConnectionRequest =
+  (connectionId) =>
     request(
-      "/requests/count"
+      `/${connectionId}/accept`,
+      {
+        method: "PATCH",
+      }
     );
 
-
-// ============================================================
-// ACCEPT
-// ============================================================
-
-export const acceptConnectionRequest = (
-  connectionId
-) =>
-  request(
-    `/${connectionId}/accept`,
-    {
-      method: "PATCH",
-    }
-  );
-
-
-// ============================================================
-// REJECT
-// ============================================================
-
-export const rejectConnectionRequest = (
-  connectionId
-) =>
-  request(
-    `/${connectionId}/reject`,
-    {
-      method: "PATCH",
-    }
-  );
-
-
-// ============================================================
-// REMOVE CONNECTION
-// ============================================================
+export const rejectConnectionRequest =
+  (connectionId) =>
+    request(
+      `/${connectionId}/reject`,
+      {
+        method: "PATCH",
+      }
+    );
 
 export const removeConnection = (
   userId

@@ -19,13 +19,9 @@ import {
   useState,
 } from "react";
 
-import {
-  useAuth,
-} from "../context/useAuth";
+import { useAuth } from "../context/useAuth";
 
-import {
-  socket,
-} from "../services/socket";
+import { socket } from "../services/socket";
 
 import {
   getUnreadNotificationCount,
@@ -53,16 +49,15 @@ function AppShell({
   ] = useState(0);
 
   const [
-    requestCount,
-    setRequestCount,
+    pendingConnectionCount,
+    setPendingConnectionCount,
   ] = useState(0);
 
 
-  const isActive = (
-    path
-  ) =>
-    location.pathname ===
-    path;
+  const isActive =
+    (path) =>
+      location.pathname ===
+      path;
 
 
   const isGroupsActive =
@@ -71,42 +66,43 @@ function AppShell({
     );
 
 
-  // ==========================================================
-  // LOAD NOTIFICATION COUNT
-  // ==========================================================
+  /*
+    ============================================================
+    INITIAL NOTIFICATION COUNT
+    ============================================================
+  */
 
   useEffect(() => {
     if (!user?._id) {
+      setUnreadCount(0);
       return undefined;
     }
 
-    let cancelled =
-      false;
+    let cancelled = false;
 
-    const load =
-      async () => {
-        try {
-          const data =
-            await getUnreadNotificationCount();
+    const load = async () => {
+      try {
+        const data =
+          await getUnreadNotificationCount();
 
-          if (cancelled) {
-            return;
-          }
-
-          setUnreadCount(
-            Number(
-              data?.count
-            ) || 0
-          );
-        } catch (error) {
-          if (!cancelled) {
-            console.error(
-              "Unable to load notification count:",
-              error
-            );
-          }
+        if (cancelled) {
+          return;
         }
-      };
+
+        setUnreadCount(
+          Number(
+            data?.count
+          ) || 0
+        );
+      } catch (error) {
+        if (!cancelled) {
+          console.error(
+            "Unable to load notification count:",
+            error
+          );
+        }
+      }
+    };
 
     load();
 
@@ -116,43 +112,46 @@ function AppShell({
   }, [user?._id]);
 
 
-  // ==========================================================
-  // LOAD CONNECTION REQUEST COUNT
-  // ==========================================================
+  /*
+    ============================================================
+    INITIAL CONNECTION REQUEST COUNT
+    ============================================================
+  */
 
   useEffect(() => {
     if (!user?._id) {
-      setRequestCount(0);
+      setPendingConnectionCount(
+        0
+      );
+
       return undefined;
     }
 
-    let cancelled =
-      false;
+    let cancelled = false;
 
-    const load =
-      async () => {
-        try {
-          const data =
-            await getConnectionRequestCount();
+    const load = async () => {
+      try {
+        const data =
+          await getConnectionRequestCount();
 
-          if (cancelled) {
-            return;
-          }
-
-          setRequestCount(
-            Number(
-              data?.count
-            ) || 0
-          );
-        } catch (error) {
-          if (!cancelled) {
-            console.error(
-              "Unable to load connection request count:",
-              error
-            );
-          }
+        if (cancelled) {
+          return;
         }
-      };
+
+        setPendingConnectionCount(
+          Number(
+            data?.count
+          ) || 0
+        );
+      } catch (error) {
+        if (!cancelled) {
+          console.error(
+            "Unable to load connection request count:",
+            error
+          );
+        }
+      }
+    };
 
     load();
 
@@ -162,64 +161,11 @@ function AppShell({
   }, [user?._id]);
 
 
-  // ==========================================================
-  // REFRESH REQUEST COUNT WHEN REQUESTS PAGE OPENS
-  // ==========================================================
-
-  useEffect(() => {
-    if (
-      location.pathname !==
-      "/message-requests"
-    ) {
-      return undefined;
-    }
-
-    if (!user?._id) {
-      return undefined;
-    }
-
-    let cancelled =
-      false;
-
-    const refresh =
-      async () => {
-        try {
-          const data =
-            await getConnectionRequestCount();
-
-          if (cancelled) {
-            return;
-          }
-
-          setRequestCount(
-            Number(
-              data?.count
-            ) || 0
-          );
-        } catch (error) {
-          if (!cancelled) {
-            console.error(
-              "Unable to refresh request count:",
-              error
-            );
-          }
-        }
-      };
-
-    refresh();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    location.pathname,
-    user?._id,
-  ]);
-
-
-  // ==========================================================
-  // SOCKET EVENTS
-  // ==========================================================
+  /*
+    ============================================================
+    REALTIME EVENTS
+    ============================================================
+  */
 
   useEffect(() => {
     if (!user?._id) {
@@ -231,10 +177,9 @@ function AppShell({
     }
 
 
-    // ------------------------------------------
-    // NEW NOTIFICATION
-    // ------------------------------------------
-
+    /*
+      Normal persistent notifications.
+    */
     const handleNotification =
       () => {
         setUnreadCount(
@@ -244,15 +189,30 @@ function AppShell({
       };
 
 
-    // ------------------------------------------
-    // NEW CONNECTION REQUEST
-    // ------------------------------------------
-
+    /*
+      New connection request.
+    */
     const handleConnectionRequest =
       () => {
-        setRequestCount(
+        setPendingConnectionCount(
           (current) =>
             current + 1
+        );
+      };
+
+
+    /*
+      Connection request accepted
+      or declined by current user.
+    */
+    const handleConnectionRequestUpdated =
+      () => {
+        setPendingConnectionCount(
+          (current) =>
+            Math.max(
+              0,
+              current - 1
+            )
         );
       };
 
@@ -267,6 +227,11 @@ function AppShell({
       handleConnectionRequest
     );
 
+    socket.on(
+      "connection-request:updated",
+      handleConnectionRequestUpdated
+    );
+
 
     return () => {
       socket.off(
@@ -278,13 +243,71 @@ function AppShell({
         "connection-request",
         handleConnectionRequest
       );
+
+      socket.off(
+        "connection-request:updated",
+        handleConnectionRequestUpdated
+      );
     };
   }, [user?._id]);
 
 
-  // ==========================================================
-  // LOGOUT
-  // ==========================================================
+  /*
+    ============================================================
+    REFRESH NOTIFICATION COUNT WHEN OPENING
+    NOTIFICATIONS
+    ============================================================
+  */
+
+  useEffect(() => {
+    if (
+      location.pathname !==
+      "/notifications"
+    ) {
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const refresh = async () => {
+      try {
+        const data =
+          await getUnreadNotificationCount();
+
+        if (cancelled) {
+          return;
+        }
+
+        setUnreadCount(
+          Number(
+            data?.count
+          ) || 0
+        );
+      } catch (error) {
+        if (!cancelled) {
+          console.error(
+            "Unable to refresh notification count:",
+            error
+          );
+        }
+      }
+    };
+
+    refresh();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    location.pathname,
+  ]);
+
+
+  /*
+    ============================================================
+    LOGOUT
+    ============================================================
+  */
 
   const handleLogout =
     async () => {
@@ -319,8 +342,6 @@ function AppShell({
 
         <div className="app-navbar-inner">
 
-          {/* LOGO */}
-
           <Link
             to="/dashboard"
             className="app-navbar-logo"
@@ -329,8 +350,6 @@ function AppShell({
             CoChat
           </Link>
 
-
-          {/* NAVIGATION */}
 
           <nav
             className="app-navbar-links"
@@ -347,9 +366,7 @@ function AppShell({
                   : ""
               }`}
             >
-              <Home
-                size={16}
-              />
+              <Home size={16} />
 
               <span>
                 Home
@@ -367,9 +384,7 @@ function AppShell({
                   : ""
               }`}
             >
-              <Compass
-                size={16}
-              />
+              <Compass size={16} />
 
               <span>
                 Discover
@@ -387,9 +402,7 @@ function AppShell({
                   : ""
               }`}
             >
-              <MessageCircle
-                size={16}
-              />
+              <MessageCircle size={16} />
 
               <span>
                 Messages
@@ -405,19 +418,13 @@ function AppShell({
                   : ""
               }`}
             >
-              <UsersRound
-                size={16}
-              />
+              <UsersRound size={16} />
 
               <span>
                 Groups
               </span>
             </Link>
 
-
-            {/* ====================================
-                REQUESTS
-                ==================================== */}
 
             <Link
               to="/message-requests"
@@ -429,76 +436,28 @@ function AppShell({
                   : ""
               }`}
             >
-
-              <span
-                style={{
-                  position:
-                    "relative",
-                  display:
-                    "inline-flex",
-                }}
-              >
-                <MailPlus
-                  size={16}
-                />
-
-                {requestCount >
-                  0 && (
-                  <span
-                    style={{
-                      position:
-                        "absolute",
-                      top:
-                        "-9px",
-                      right:
-                        "-11px",
-                      minWidth:
-                        "17px",
-                      height:
-                        "17px",
-                      padding:
-                        "0 4px",
-                      borderRadius:
-                        "999px",
-                      background:
-                        "#ef4444",
-                      color:
-                        "#ffffff",
-                      fontSize:
-                        "10px",
-                      fontWeight:
-                        800,
-                      lineHeight:
-                        "17px",
-                      textAlign:
-                        "center",
-                      border:
-                        "2px solid #ffffff",
-                    }}
-                  >
-                    {requestCount >
-                    99
-                      ? "99+"
-                      : requestCount}
-                  </span>
-                )}
-
-              </span>
+              <MailPlus size={16} />
 
               <span>
                 Requests
               </span>
+
+              {pendingConnectionCount >
+                0 && (
+                <span className="app-request-badge">
+                  {pendingConnectionCount >
+                  99
+                    ? "99+"
+                    : pendingConnectionCount}
+                </span>
+              )}
 
             </Link>
 
           </nav>
 
 
-          {/* ACTIONS */}
-
           <div className="app-navbar-actions">
-
-            {/* NOTIFICATIONS */}
 
             <Link
               to="/notifications"
@@ -517,9 +476,7 @@ function AppShell({
               }
             >
 
-              <Bell
-                size={18}
-              />
+              <Bell size={18} />
 
               {unreadCount >
                 0 && (
@@ -533,8 +490,6 @@ function AppShell({
 
             </Link>
 
-
-            {/* PROFILE */}
 
             <Link
               to="/profile"
@@ -562,8 +517,6 @@ function AppShell({
 
             </Link>
 
-
-            {/* LOGOUT */}
 
             <button
               type="button"
