@@ -69,9 +69,15 @@ export const getCurrentUser = async () => {
   const data = await response.json();
 
   if (!response.ok) {
-    throw new Error(
+    const error = new Error(
       data.message || "Not authenticated."
     );
+
+    // Let callers (AuthProvider) tell a real "not logged in"
+    // response apart from a transient server/network failure.
+    error.status = response.status;
+
+    throw error;
   }
 
   return data;
