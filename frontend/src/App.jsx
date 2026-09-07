@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import PublicProfile from "./pages/PublicProfile";
 import Landing from "./pages/Landing";
@@ -17,14 +17,59 @@ import Notifications from "./pages/Notifications";
 import ProtectedRoute from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
+import { useAuth } from "./context/useAuth";
+
+
+// ==========================================
+// HOME ROUTE
+// ==========================================
+// If the user is already logged in and visits "/",
+// send them directly to the dashboard.
+//
+// If they are not logged in, show the public landing page.
+//
+// We also wait for the authentication check to finish
+// so that an authenticated user doesn't briefly see
+// the landing page while /auth/me is being checked.
+// ==========================================
+
+function HomeRoute() {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return null;
+  }
+
+  if (user) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
+  return <Landing />;
+}
+
+
+// ==========================================
+// APP
+// ==========================================
+
 function App() {
   return (
     <BrowserRouter>
       <Routes>
+
+        {/* ======================================
+            PUBLIC HOME
+            ====================================== */}
+
         <Route
           path="/"
-          element={<Landing />}
+          element={<HomeRoute />}
         />
+
+
+        {/* ======================================
+            AUTH ROUTES
+            ====================================== */}
 
         <Route
           path="/login"
@@ -36,7 +81,13 @@ function App() {
           element={<Signup />}
         />
 
+
+        {/* ======================================
+            PROTECTED ROUTES
+            ====================================== */}
+
         <Route element={<ProtectedRoute />}>
+
           <Route
             path="/dashboard"
             element={<Dashboard />}
@@ -83,16 +134,27 @@ function App() {
           />
 
           <Route
-  path="/message-requests"
-  element={<MessageRequests />}
-/>
+            path="/message-requests"
+            element={<MessageRequests />}
+          />
 
           <Route
             path="/notifications"
             element={<Notifications />}
           />
+
         </Route>
-        <Route path="*" element={<NotFound />} />
+
+
+        {/* ======================================
+            404
+            ====================================== */}
+
+        <Route
+          path="*"
+          element={<NotFound />}
+        />
+
       </Routes>
     </BrowserRouter>
   );
