@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 
 import {
+  useCallback,
   useEffect,
   useState,
 } from "react";
@@ -27,8 +28,8 @@ import {
 } from "../services/notificationService";
 
 import {
-  getMessageRequests,
-} from "../services/conversationService";
+  getConnectionRequestCount,
+} from "../services/connectionService";
 
 
 function AppShell({ children }) {
@@ -54,23 +55,34 @@ function AppShell({ children }) {
 
   /*
    * =====================================================
-   * MESSAGE REQUEST BADGE
+   * CONNECTION REQUEST BADGE
    * =====================================================
    *
    * IMPORTANT:
    *
-   * The Requests page uses:
+   * The "Requests" page (MessageRequests.jsx) shows
+   * pending CONNECTION requests using:
    *
-   * /api/conversations/requests
+   * GET /api/connections/requests
+   * GET /api/connections/requests/sent
    *
-   * through getMessageRequests().
+   * through connectionService.js.
    *
-   * We use the exact same API here.
+   * The badge on this icon must count the exact same
+   * thing that page shows, so we use the matching
+   * lightweight count endpoint:
+   *
+   * GET /api/connections/requests/count
+   *
+   * (Previously this used getMessageRequests(), which
+   * hits a completely unrelated endpoint
+   * /api/conversations/requests, so the badge never
+   * matched what was actually on the Requests page.)
    */
 
   const [
-    messageRequestCount,
-    setMessageRequestCount,
+    pendingRequestCount,
+    setPendingRequestCount,
   ] = useState(0);
 
 
@@ -86,58 +98,59 @@ function AppShell({ children }) {
 
   /*
    * =====================================================
-   * LOAD MESSAGE REQUEST COUNT
+   * LOAD PENDING CONNECTION REQUEST COUNT
    * =====================================================
    */
 
+  const loadPendingRequestCount =
+    useCallback(async () => {
+      if (!user?._id) {
+        return;
+      }
+
+      try {
+        const data =
+          await getConnectionRequestCount();
+
+        setPendingRequestCount(
+          Number(data?.count) || 0
+        );
+      } catch (error) {
+        console.error(
+          "Unable to load connection request count:",
+          error
+        );
+      }
+    }, [user?._id]);
+
+
   useEffect(() => {
     if (!user?._id) {
-      setMessageRequestCount(0);
+      setPendingRequestCount(0);
       return undefined;
     }
 
     let cancelled = false;
 
-    const loadMessageRequestCount =
-      async () => {
-        try {
-          const data =
-            await getMessageRequests();
-
-          if (cancelled) return;
-
-          const requests =
-            Array.isArray(data?.requests)
-              ? data.requests
-              : [];
-
-          setMessageRequestCount(
-            requests.length
-          );
-        } catch (error) {
-          if (!cancelled) {
-            console.error(
-              "Unable to load message request count:",
-              error
-            );
-          }
-        }
-      };
+    const load = async () => {
+      if (cancelled) return;
+      await loadPendingRequestCount();
+    };
 
     /*
      * Load immediately when the
      * navbar mounts.
      */
-    loadMessageRequestCount();
+    load();
 
 
     /*
      * Keep the badge synchronized even
-     * if the socket event is missed.
+     * if a realtime event is missed.
      */
     const interval =
       window.setInterval(
-        loadMessageRequestCount,
+        load,
         10000
       );
 
@@ -152,13 +165,31 @@ function AppShell({ children }) {
           document.visibilityState ===
           "visible"
         ) {
-          loadMessageRequestCount();
+          load();
         }
       };
 
     document.addEventListener(
       "visibilitychange",
       handleVisibilityChange
+    );
+
+
+    /*
+     * The Requests page (MessageRequests.jsx)
+     * dispatches this custom event the moment the
+     * user accepts/declines a request in the same
+     * tab, so the badge updates instantly without
+     * waiting on a socket round trip.
+     */
+    const handleLocalUpdate =
+      () => {
+        load();
+      };
+
+    window.addEventListener(
+      "connection-request:updated",
+      handleLocalUpdate
     );
 
 
@@ -173,8 +204,13 @@ function AppShell({ children }) {
         "visibilitychange",
         handleVisibilityChange
       );
+
+      window.removeEventListener(
+        "connection-request:updated",
+        handleLocalUpdate
+      );
     };
-  }, [user?._id]);
+  }, [user?._id, loadPendingRequestCount]);
 
 
   /*
@@ -240,6 +276,81 @@ function AppShell({ children }) {
 
   /*
    * =====================================================
+   * REALTIME: NEW CONNECTION REQUEST RECEIVED
+   * =====================================================
+   *
+   * Emitted straight away by the backend
+   * (connectionRoutes.js -> POST /request/:userId)
+   * to `user:<recipientId>` as soon as someone sends
+   * a connection request, so the badge appears the
+   * instant it happens instead of waiting up to 10s
+   * for the polling fallback.
+   */
+
+  useEffect(() => {
+    if (!user?._id) {
+      return undefined;
+    }
+
+    const handleNewConnectionRequest =
+      () => {
+        setPendingRequestCount(
+          (current) =>
+            current + 1
+        );
+      };
+
+    socket.on(
+      "connection-request",
+      handleNewConnectionRequest
+    );
+
+    return () => {
+      socket.off(
+        "connection-request",
+        handleNewConnectionRequest
+      );
+    };
+  }, [user?._id]);
+
+
+  /*
+   * =====================================================
+   * REALTIME: REQUEST ACCEPTED / DECLINED
+   * =====================================================
+   *
+   * Emitted by the backend whenever a pending request
+   * this user received changes status. We re-fetch
+   * rather than blindly decrementing so the badge stays
+   * correct even if multiple tabs/devices are open.
+   */
+
+  useEffect(() => {
+    if (!user?._id) {
+      return undefined;
+    }
+
+    const handleRequestUpdated =
+      () => {
+        loadPendingRequestCount();
+      };
+
+    socket.on(
+      "connection-request:updated",
+      handleRequestUpdated
+    );
+
+    return () => {
+      socket.off(
+        "connection-request:updated",
+        handleRequestUpdated
+      );
+    };
+  }, [user?._id, loadPendingRequestCount]);
+
+
+  /*
+   * =====================================================
    * REALTIME NOTIFICATIONS
    * =====================================================
    *
@@ -248,7 +359,10 @@ function AppShell({ children }) {
    *
    * notification:new
    *
-   * A message request is one of those notifications.
+   * A connection request is one of those notifications
+   * (type: "connection-request"). This acts as a backup
+   * in case the dedicated "connection-request" socket
+   * event above is ever missed.
    */
 
   useEffect(() => {
@@ -270,33 +384,17 @@ function AppShell({ children }) {
 
         /*
          * If this notification is a new
-         * message request, immediately
+         * connection request, immediately
          * reload the real pending request
          * count.
          */
         if (
           notification?.type ===
-          "message-request"
+            "connection-request" ||
+          notification?.type ===
+            "connection-accepted"
         ) {
-          getMessageRequests()
-            .then((data) => {
-              const requests =
-                Array.isArray(
-                  data?.requests
-                )
-                  ? data.requests
-                  : [];
-
-              setMessageRequestCount(
-                requests.length
-              );
-            })
-            .catch((error) => {
-              console.error(
-                "Unable to refresh message request count:",
-                error
-              );
-            });
+          loadPendingRequestCount();
         }
       };
 
@@ -313,7 +411,7 @@ function AppShell({ children }) {
         handleNotification
       );
     };
-  }, [user?._id]);
+  }, [user?._id, loadPendingRequestCount]);
 
 
   /*
@@ -359,6 +457,31 @@ function AppShell({ children }) {
     };
   }, [
     location.pathname,
+  ]);
+
+
+  /*
+   * =====================================================
+   * REFRESH REQUEST COUNT WHEN REQUESTS PAGE OPENS
+   * =====================================================
+   *
+   * Covers the case where the user opened the Requests
+   * page from a stale tab (e.g. after a long time away)
+   * before any socket event or poll tick has fired.
+   */
+
+  useEffect(() => {
+    if (
+      location.pathname !==
+      "/message-requests"
+    ) {
+      return undefined;
+    }
+
+    loadPendingRequestCount();
+  }, [
+    location.pathname,
+    loadPendingRequestCount,
   ]);
 
 
@@ -509,16 +632,16 @@ function AppShell({ children }) {
                 <MailPlus size={16} />
 
 
-                {messageRequestCount >
+                {pendingRequestCount >
                   0 && (
                   <span
                     className="app-request-badge"
-                    aria-label={`${messageRequestCount} incoming message requests`}
+                    aria-label={`${pendingRequestCount} incoming connection requests`}
                   >
-                    {messageRequestCount >
+                    {pendingRequestCount >
                     99
                       ? "99+"
-                      : messageRequestCount}
+                      : pendingRequestCount}
                   </span>
                 )}
 

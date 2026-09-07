@@ -100,6 +100,18 @@ export const getConnectionRequests = () =>
 
 /*
   ============================================================
+  PENDING INCOMING REQUEST COUNT
+  ============================================================
+*/
+
+export const getConnectionRequestCount = () =>
+  request(
+    "/requests/count"
+  );
+
+
+/*
+  ============================================================
   SENT CONNECTION REQUESTS
   ============================================================
 */
