@@ -362,22 +362,20 @@ router.post(
   "/google",
   async (req, res) => {
     try {
-      const { credential } =
-        req.body;
+      const { credential } = req.body;
 
       if (!credential) {
         return res.status(400).json({
-          message:
-            "Google credential is required.",
+          message: "Google credential is required.",
         });
       }
 
-      if (
-        !process.env
-          .GOOGLE_CLIENT_ID
-      ) {
+      const googleClientId =
+        process.env.GOOGLE_CLIENT_ID?.trim();
+
+      if (!googleClientId) {
         console.error(
-          "GOOGLE_CLIENT_ID is not configured."
+          "GOOGLE_CLIENT_ID is missing on the backend."
         );
 
         return res.status(500).json({
@@ -386,20 +384,51 @@ router.post(
         });
       }
 
-      const ticket =
-        await googleClient.verifyIdToken(
-          {
+      console.log(
+        "Google login attempt received."
+      );
+
+      console.log(
+        "Google Client ID configured:",
+        `${googleClientId.substring(0, 20)}...`
+      );
+
+      // ==========================================
+      // VERIFY GOOGLE ID TOKEN
+      // ==========================================
+
+      let ticket;
+
+      try {
+        ticket =
+          await googleClient.verifyIdToken({
             idToken: credential,
-            audience:
-              process.env
-                .GOOGLE_CLIENT_ID,
-          }
+            audience: googleClientId,
+          });
+      } catch (googleError) {
+        console.error(
+          "Google ID token verification failed:"
         );
+
+        console.error(
+          googleError?.message ||
+            googleError
+        );
+
+        return res.status(401).json({
+          message:
+            "Google authentication failed. The Google credential could not be verified.",
+        });
+      }
 
       const payload =
         ticket.getPayload();
 
       if (!payload) {
+        console.error(
+          "Google token verification returned no payload."
+        );
+
         return res.status(401).json({
           message:
             "Invalid Google credential.",
@@ -409,16 +438,31 @@ router.post(
       const {
         sub: googleId,
         email,
-        email_verified:
-          emailVerified,
+        email_verified: emailVerified,
         name,
         picture,
       } = payload;
 
-      if (
-        !email ||
-        !emailVerified
-      ) {
+      console.log(
+        "Google identity verified:",
+        email
+      );
+
+      if (!googleId) {
+        return res.status(401).json({
+          message:
+            "Google account ID is missing.",
+        });
+      }
+
+      if (!email) {
+        return res.status(401).json({
+          message:
+            "Google account email is missing.",
+        });
+      }
+
+      if (!emailVerified) {
         return res.status(401).json({
           message:
             "Your Google email could not be verified.",
@@ -426,20 +470,24 @@ router.post(
       }
 
       const cleanEmail =
-        email
-          .trim()
-          .toLowerCase();
+        email.trim().toLowerCase();
 
-      let user =
-        await User.findOne({
-          googleId,
-        });
+      // ==========================================
+      // FIND EXISTING GOOGLE ACCOUNT
+      // ==========================================
+
+      let user = await User.findOne({
+        googleId,
+      });
+
+      // ==========================================
+      // EXISTING EMAIL ACCOUNT
+      // ==========================================
 
       if (!user) {
         const existingUser =
           await User.findOne({
-            email:
-              cleanEmail,
+            email: cleanEmail,
           });
 
         if (existingUser) {
@@ -449,33 +497,26 @@ router.post(
           });
         }
 
+        // ==========================================
+        // GENERATE UNIQUE USERNAME
+        // ==========================================
+
         let baseUsername =
-          (
-            name ||
-            "user"
-          )
+          (name || "user")
             .replace(
               /[^a-zA-Z0-9]/g,
               ""
             )
             .toLowerCase();
 
-        if (
-          baseUsername.length < 3
-        ) {
-          baseUsername =
-            "user";
+        if (baseUsername.length < 3) {
+          baseUsername = "user";
         }
 
         baseUsername =
-          baseUsername.substring(
-            0,
-            25
-          );
+          baseUsername.substring(0, 25);
 
-        let username =
-          baseUsername;
-
+        let username = baseUsername;
         let counter = 1;
 
         while (
@@ -485,54 +526,65 @@ router.post(
         ) {
           username =
             `${baseUsername}${counter}`;
-
           counter++;
         }
 
-        user =
-          await User.create({
-            username,
-            email:
-              cleanEmail,
-            googleId,
-            authProvider:
-              "google",
-            avatar:
-              picture || "",
-            profileCompleted:
-              false,
-          });
+        // ==========================================
+        // CREATE GOOGLE USER
+        // ==========================================
+
+        user = await User.create({
+          username,
+          email: cleanEmail,
+          googleId,
+          authProvider: "google",
+          avatar: picture || "",
+          profileCompleted: false,
+        });
+
+        console.log(
+          "New Google user created:",
+          user._id.toString()
+        );
       }
+
+      // ==========================================
+      // CREATE COCHAT JWT
+      // ==========================================
 
       const token =
         createToken(user._id);
 
-      setTokenCookie(
-        req,
-        res,
-        token
+      setTokenCookie(res, token);
+
+      console.log(
+        "Google login successful:",
+        user.email
       );
 
       return res.json({
         message:
           "Google login successful.",
-        user:
-          getUserResponse(user),
+        user: getUserResponse(user),
       });
     } catch (error) {
       console.error(
-        "Google login error:",
-        error
+        "Google login route error:"
       );
 
-      return res.status(401).json({
+      console.error(
+        error?.stack ||
+          error?.message ||
+          error
+      );
+
+      return res.status(500).json({
         message:
-          "Unable to authenticate with Google. Please try again.",
+          "Unable to complete Google login. Please try again.",
       });
     }
   }
 );
-
 // ==========================================
 // CURRENT USER
 // ==========================================
