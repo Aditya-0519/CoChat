@@ -27,8 +27,8 @@ import {
 } from "../services/notificationService";
 
 import {
-  getConnectionRequests,
-} from "../services/connectionService";
+  getMessageRequests,
+} from "../services/conversationService";
 
 
 function AppShell({ children }) {
@@ -42,7 +42,7 @@ function AppShell({ children }) {
 
   /*
    * =====================================================
-   * NOTIFICATION COUNT
+   * NOTIFICATION BADGE
    * =====================================================
    */
 
@@ -54,13 +54,23 @@ function AppShell({ children }) {
 
   /*
    * =====================================================
-   * CONNECTION REQUEST COUNT
+   * MESSAGE REQUEST BADGE
    * =====================================================
+   *
+   * IMPORTANT:
+   *
+   * The Requests page uses:
+   *
+   * /api/conversations/requests
+   *
+   * through getMessageRequests().
+   *
+   * We use the exact same API here.
    */
 
   const [
-    requestCount,
-    setRequestCount,
+    messageRequestCount,
+    setMessageRequestCount,
   ] = useState(0);
 
 
@@ -76,7 +86,100 @@ function AppShell({ children }) {
 
   /*
    * =====================================================
-   * LOAD UNREAD NOTIFICATIONS
+   * LOAD MESSAGE REQUEST COUNT
+   * =====================================================
+   */
+
+  useEffect(() => {
+    if (!user?._id) {
+      setMessageRequestCount(0);
+      return undefined;
+    }
+
+    let cancelled = false;
+
+    const loadMessageRequestCount =
+      async () => {
+        try {
+          const data =
+            await getMessageRequests();
+
+          if (cancelled) return;
+
+          const requests =
+            Array.isArray(data?.requests)
+              ? data.requests
+              : [];
+
+          setMessageRequestCount(
+            requests.length
+          );
+        } catch (error) {
+          if (!cancelled) {
+            console.error(
+              "Unable to load message request count:",
+              error
+            );
+          }
+        }
+      };
+
+    /*
+     * Load immediately when the
+     * navbar mounts.
+     */
+    loadMessageRequestCount();
+
+
+    /*
+     * Keep the badge synchronized even
+     * if the socket event is missed.
+     */
+    const interval =
+      window.setInterval(
+        loadMessageRequestCount,
+        10000
+      );
+
+
+    /*
+     * Refresh when user returns to
+     * the browser tab.
+     */
+    const handleVisibilityChange =
+      () => {
+        if (
+          document.visibilityState ===
+          "visible"
+        ) {
+          loadMessageRequestCount();
+        }
+      };
+
+    document.addEventListener(
+      "visibilitychange",
+      handleVisibilityChange
+    );
+
+
+    return () => {
+      cancelled = true;
+
+      window.clearInterval(
+        interval
+      );
+
+      document.removeEventListener(
+        "visibilitychange",
+        handleVisibilityChange
+      );
+    };
+  }, [user?._id]);
+
+
+  /*
+   * =====================================================
+   * INITIAL UNREAD NOTIFICATION COUNT
    * =====================================================
    */
 
@@ -118,97 +221,7 @@ function AppShell({ children }) {
 
   /*
    * =====================================================
-   * LOAD CONNECTION REQUEST COUNT
-   *
-   * This reads the real incoming pending requests
-   * from the backend.
-   * =====================================================
-   */
-
-  useEffect(() => {
-    if (!user?._id) {
-      setRequestCount(0);
-      return undefined;
-    }
-
-    let cancelled = false;
-
-    const loadRequestCount = async () => {
-      try {
-        const data =
-          await getConnectionRequests();
-
-        if (cancelled) return;
-
-        const requests =
-          Array.isArray(data?.requests)
-            ? data.requests
-            : [];
-
-        setRequestCount(
-          requests.length
-        );
-      } catch (error) {
-        if (!cancelled) {
-          console.error(
-            "Unable to load connection request count:",
-            error
-          );
-        }
-      }
-    };
-
-    loadRequestCount();
-
-    /*
-     * Also refresh periodically so the badge stays
-     * correct even if the socket reconnects or an
-     * action happens from another browser/device.
-     */
-    const interval = setInterval(
-      loadRequestCount,
-      15000
-    );
-
-    /*
-     * Refresh when the user returns to the tab.
-     */
-    const handleVisibilityChange = () => {
-      if (
-        document.visibilityState ===
-        "visible"
-      ) {
-        loadRequestCount();
-      }
-    };
-
-    document.addEventListener(
-      "visibilitychange",
-      handleVisibilityChange
-    );
-
-    /*
-     * Refresh whenever navigation changes.
-     */
-    return () => {
-      cancelled = true;
-
-      clearInterval(interval);
-
-      document.removeEventListener(
-        "visibilitychange",
-        handleVisibilityChange
-      );
-    };
-  }, [
-    user?._id,
-    location.pathname,
-  ]);
-
-
-  /*
-   * =====================================================
-   * REALTIME NOTIFICATIONS
+   * SOCKET CONNECTION
    * =====================================================
    */
 
@@ -221,17 +234,78 @@ function AppShell({ children }) {
       socket.connect();
     }
 
-    const handleNotification = () => {
-      setUnreadCount(
-        (current) =>
-          current + 1
-      );
-    };
+    return undefined;
+  }, [user?._id]);
+
+
+  /*
+   * =====================================================
+   * REALTIME NOTIFICATIONS
+   * =====================================================
+   *
+   * Every persistent notification created by the
+   * backend is sent through:
+   *
+   * notification:new
+   *
+   * A message request is one of those notifications.
+   */
+
+  useEffect(() => {
+    if (!user?._id) {
+      return undefined;
+    }
+
+    const handleNotification =
+      (notification) => {
+
+        /*
+         * Update normal notification badge.
+         */
+        setUnreadCount(
+          (current) =>
+            current + 1
+        );
+
+
+        /*
+         * If this notification is a new
+         * message request, immediately
+         * reload the real pending request
+         * count.
+         */
+        if (
+          notification?.type ===
+          "message-request"
+        ) {
+          getMessageRequests()
+            .then((data) => {
+              const requests =
+                Array.isArray(
+                  data?.requests
+                )
+                  ? data.requests
+                  : [];
+
+              setMessageRequestCount(
+                requests.length
+              );
+            })
+            .catch((error) => {
+              console.error(
+                "Unable to refresh message request count:",
+                error
+              );
+            });
+        }
+      };
+
 
     socket.on(
       "notification:new",
       handleNotification
     );
+
 
     return () => {
       socket.off(
@@ -244,123 +318,7 @@ function AppShell({ children }) {
 
   /*
    * =====================================================
-   * REALTIME CONNECTION REQUESTS
-   *
-   * Backend emits "connection-request" whenever
-   * somebody sends the logged-in user a request.
-   * =====================================================
-   */
-
-  useEffect(() => {
-    if (!user?._id) {
-      return undefined;
-    }
-
-    if (!socket.connected) {
-      socket.connect();
-    }
-
-    const handleConnectionRequest = () => {
-      /*
-       * Don't blindly increment because the socket
-       * event could be duplicated after reconnecting.
-       *
-       * Re-read the backend count instead.
-       */
-
-      getConnectionRequests()
-        .then((data) => {
-          const requests =
-            Array.isArray(data?.requests)
-              ? data.requests
-              : [];
-
-          setRequestCount(
-            requests.length
-          );
-        })
-        .catch((error) => {
-          console.error(
-            "Unable to refresh connection request count:",
-            error
-          );
-        });
-    };
-
-    socket.on(
-      "connection-request",
-      handleConnectionRequest
-    );
-
-    return () => {
-      socket.off(
-        "connection-request",
-        handleConnectionRequest
-      );
-    };
-  }, [user?._id]);
-
-
-  /*
-   * =====================================================
-   * REFRESH REQUEST COUNT WHEN REQUESTS PAGE OPENS
-   * =====================================================
-   */
-
-  useEffect(() => {
-    if (
-      location.pathname !==
-      "/message-requests"
-    ) {
-      return undefined;
-    }
-
-    if (!user?._id) {
-      return undefined;
-    }
-
-    let cancelled = false;
-
-    const refresh = async () => {
-      try {
-        const data =
-          await getConnectionRequests();
-
-        if (cancelled) return;
-
-        const requests =
-          Array.isArray(data?.requests)
-            ? data.requests
-            : [];
-
-        setRequestCount(
-          requests.length
-        );
-      } catch (error) {
-        if (!cancelled) {
-          console.error(
-            "Unable to refresh connection request count:",
-            error
-          );
-        }
-      }
-    };
-
-    refresh();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    location.pathname,
-    user?._id,
-  ]);
-
-
-  /*
-   * =====================================================
-   * REFRESH NOTIFICATION COUNT WHEN NOTIFICATIONS
-   * PAGE OPENS
+   * REFRESH NOTIFICATION COUNT WHEN PAGE OPENS
    * =====================================================
    */
 
@@ -410,18 +368,19 @@ function AppShell({ children }) {
    * =====================================================
    */
 
-  const handleLogout = async () => {
-    try {
-      socket.disconnect();
+  const handleLogout =
+    async () => {
+      try {
+        socket.disconnect();
 
-      await logout();
-    } catch (error) {
-      console.error(
-        "Logout failed:",
-        error
-      );
-    }
-  };
+        await logout();
+      } catch (error) {
+        console.error(
+          "Logout failed:",
+          error
+        );
+      }
+    };
 
 
   /*
@@ -530,7 +489,9 @@ function AppShell({ children }) {
             </Link>
 
 
-            {/* REQUESTS */}
+            {/* =================================================
+                REQUESTS
+            ================================================= */}
 
             <Link
               to="/message-requests"
@@ -547,14 +508,17 @@ function AppShell({ children }) {
 
                 <MailPlus size={16} />
 
-                {requestCount > 0 && (
+
+                {messageRequestCount >
+                  0 && (
                   <span
                     className="app-request-badge"
-                    aria-label={`${requestCount} incoming connection requests`}
+                    aria-label={`${messageRequestCount} incoming message requests`}
                   >
-                    {requestCount > 99
+                    {messageRequestCount >
+                    99
                       ? "99+"
-                      : requestCount}
+                      : messageRequestCount}
                   </span>
                 )}
 
@@ -570,7 +534,9 @@ function AppShell({ children }) {
           </nav>
 
 
-          {/* RIGHT SIDE */}
+          {/* =================================================
+              RIGHT SIDE
+          ================================================= */}
 
           <div className="app-navbar-actions">
 
@@ -596,9 +562,12 @@ function AppShell({ children }) {
 
               <Bell size={18} />
 
-              {unreadCount > 0 && (
+
+              {unreadCount >
+                0 && (
                 <span className="app-notification-badge">
-                  {unreadCount > 99
+                  {unreadCount >
+                  99
                     ? "99+"
                     : unreadCount}
                 </span>
@@ -637,7 +606,9 @@ function AppShell({ children }) {
             <button
               type="button"
               className="app-navbar-logout"
-              onClick={handleLogout}
+              onClick={
+                handleLogout
+              }
               title="Log out"
               aria-label="Log out"
             >

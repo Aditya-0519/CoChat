@@ -2598,6 +2598,49 @@ h1 span {
   background: rgba(99, 102, 241, 0.08);
 }
 
+.app-nav-link-requests {
+  position: relative;
+}
+
+.app-nav-link-icon-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+}
+
+.app-request-badge {
+  position: absolute;
+  top: -9px;
+  right: -11px;
+
+  min-width: 18px;
+  height: 18px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  padding: 0 4px;
+
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+
+  background: #ef4444;
+  color: #ffffff;
+
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+
+  box-shadow:
+    0 4px 10px rgba(239, 68, 68, 0.28);
+
+  z-index: 5;
+}
+
 .app-navbar-profile {
   width: 38px;
   height: 38px;
