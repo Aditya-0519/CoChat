@@ -2,6 +2,10 @@ const mongoose = require("mongoose");
 
 const userSchema = new mongoose.Schema(
   {
+    // ==========================================
+    // USERNAME
+    // ==========================================
+
     username: {
       type: String,
       required: true,
@@ -11,6 +15,10 @@ const userSchema = new mongoose.Schema(
       maxlength: 30,
     },
 
+    // ==========================================
+    // EMAIL
+    // ==========================================
+
     email: {
       type: String,
       required: true,
@@ -19,16 +27,42 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
     },
 
+    // ==========================================
+    // PASSWORD
+    // ==========================================
+    // Local accounts use a password.
+    // Google accounts do not.
+
     password: {
       type: String,
-      required: true,
       minlength: 6,
+      default: null,
     },
+
+    // ==========================================
+    // GOOGLE AUTH
+    // ==========================================
+
+    googleId: {
+      type: String,
+      unique: true,
+      sparse: true,
+    },
+
+    authProvider: {
+      type: String,
+      enum: ["local", "google"],
+      default: "local",
+    },
+
+    // ==========================================
+    // PROFILE
+    // ==========================================
 
     bio: {
       type: String,
       trim: true,
-      maxlength: 160,
+      maxlength: 500,
       default: "",
     },
 
@@ -71,6 +105,4 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-const User = mongoose.model("User", userSchema);
-
-module.exports = User;
+module.exports = mongoose.model("User", userSchema);

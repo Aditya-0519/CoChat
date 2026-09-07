@@ -1,4 +1,5 @@
-import { Link } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import {
   GraduationCap,
   ArrowRight,
@@ -6,11 +7,57 @@ import {
   MessageCircle,
   ShieldCheck,
 } from "lucide-react";
+import { GoogleLogin } from "@react-oauth/google";
 
 import Navbar from "../components/Navbar";
 import BackgroundEffects from "../components/BackgroundEffects";
+import { useAuth } from "../context/useAuth";
 
 function Landing() {
+  const { user, loginWithGoogle } = useAuth();
+  const navigate = useNavigate();
+
+  const [googleLoading, setGoogleLoading] = useState(false);
+  const [googleError, setGoogleError] = useState("");
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    if (!credentialResponse?.credential) {
+      setGoogleError("Google sign-in failed. Please try again.");
+      return;
+    }
+
+    try {
+      setGoogleLoading(true);
+      setGoogleError("");
+
+      const data = await loginWithGoogle(
+        credentialResponse.credential
+      );
+
+      const loggedInUser = data?.user || user;
+
+      if (loggedInUser?.profileCompleted) {
+        navigate("/dashboard");
+      } else {
+        navigate("/onboarding");
+      }
+    } catch (error) {
+      console.error("Google login error:", error);
+
+      setGoogleError(
+        error.message || "Unable to sign in with Google."
+      );
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleGoogleError = () => {
+    setGoogleError(
+      "Google sign-in was cancelled or failed. Please try again."
+    );
+  };
+
   return (
     <div className="landing-page">
       <Navbar />
@@ -41,11 +88,41 @@ function Landing() {
 
           {/* CTA buttons */}
           <div className="hero-buttons">
-            <button className="google-btn">
-              <span className="google-icon">G</span>
-              Continue with Google
-            </button>
 
+            {/* Real Google Login */}
+<div className="landing-google-login">
+  <div className="google-custom-button">
+    <span className="google-custom-icon">G</span>
+    <span>Continue with Google</span>
+  </div>
+
+  <div className="google-real-login">
+    <GoogleLogin
+      onSuccess={handleGoogleSuccess}
+      onError={handleGoogleError}
+      useOneTap={false}
+      theme="outline"
+      size="large"
+      text="continue_with"
+      shape="rectangular"
+      width="100%"
+    />
+  </div>
+
+  {googleLoading && (
+    <p className="google-loading">
+      Signing you in with Google...
+    </p>
+  )}
+
+  {googleError && (
+    <p className="google-error">
+      {googleError}
+    </p>
+  )}
+</div>
+
+            {/* Create account */}
             <Link to="/signup" className="signup-btn">
               <span>Create an account</span>
               <ArrowRight size={18} />

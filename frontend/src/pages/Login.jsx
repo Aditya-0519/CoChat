@@ -6,6 +6,7 @@ import {
   EyeOff,
 } from "lucide-react";
 import { useState } from "react";
+import { GoogleLogin } from "@react-oauth/google";
 
 import { useAuth } from "../context/useAuth";
 import AuthLayout from "../components/AuthLayout";
@@ -13,18 +14,17 @@ import AuthLayout from "../components/AuthLayout";
 function Login() {
   const navigate = useNavigate();
 
-  const { login } = useAuth();
+  const { login, loginWithGoogle } = useAuth();
 
   const [formData, setFormData] = useState({
     email: "",
     password: "",
   });
 
-  const [showPassword, setShowPassword] =
-    useState(false);
-
+  const [showPassword, setShowPassword] = useState(false);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleChange = (e) => {
     setFormData({
@@ -32,6 +32,10 @@ function Login() {
       [e.target.id]: e.target.value,
     });
   };
+
+  // ==========================================
+  // EMAIL / PASSWORD LOGIN
+  // ==========================================
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -54,9 +58,51 @@ function Login() {
     }
   };
 
+  // ==========================================
+  // GOOGLE LOGIN
+  // ==========================================
+
+  const handleGoogleSuccess = async (credentialResponse) => {
+    if (!credentialResponse?.credential) {
+      setMessage("Google login failed. Please try again.");
+      return;
+    }
+
+    try {
+      setGoogleLoading(true);
+      setMessage("");
+
+      const data = await loginWithGoogle(
+        credentialResponse.credential
+      );
+
+      if (data.user.profileCompleted) {
+        navigate("/dashboard");
+      } else {
+        navigate("/onboarding");
+      }
+    } catch (error) {
+      setMessage(
+        error.message || "Unable to sign in with Google."
+      );
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleGoogleError = () => {
+    setGoogleLoading(false);
+    setMessage("Google login failed. Please try again.");
+  };
+
   return (
     <AuthLayout>
       <div className="auth-card">
+
+        {/* ==========================================
+            HEADING
+        ========================================== */}
+
         <div className="auth-heading">
           <span className="auth-badge">
             Welcome back
@@ -70,22 +116,48 @@ function Login() {
           </p>
         </div>
 
-        <button
-          type="button"
-          className="auth-google-btn"
-        >
-          <span className="google-icon">G</span>
-          Continue with Google
-        </button>
+        {/* ==========================================
+            GOOGLE LOGIN
+        ========================================== */}
+
+        <div className="google-login-wrapper">
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={handleGoogleError}
+            useOneTap={false}
+            theme="outline"
+            size="large"
+            text="continue_with"
+            shape="rectangular"
+            width="100%"
+          />
+
+          {googleLoading && (
+            <p className="google-loading">
+              Signing in with Google...
+            </p>
+          )}
+        </div>
+
+        {/* ==========================================
+            DIVIDER
+        ========================================== */}
 
         <div className="auth-divider">
           <span>or</span>
         </div>
 
+        {/* ==========================================
+            EMAIL / PASSWORD FORM
+        ========================================== */}
+
         <form
           className="auth-form"
           onSubmit={handleSubmit}
         >
+
+          {/* EMAIL */}
+
           <div className="input-group">
             <label htmlFor="email">
               Email
@@ -105,6 +177,8 @@ function Login() {
               />
             </div>
           </div>
+
+          {/* PASSWORD */}
 
           <div className="input-group">
             <label htmlFor="password">
@@ -149,10 +223,12 @@ function Login() {
             </div>
           </div>
 
+          {/* LOGIN BUTTON */}
+
           <button
             type="submit"
             className="auth-submit"
-            disabled={loading}
+            disabled={loading || googleLoading}
           >
             {loading
               ? "Logging in..."
@@ -160,11 +236,19 @@ function Login() {
           </button>
         </form>
 
+        {/* ==========================================
+            MESSAGE
+        ========================================== */}
+
         {message && (
           <p className="auth-message">
             {message}
           </p>
         )}
+
+        {/* ==========================================
+            SIGNUP LINK
+        ========================================== */}
 
         <p className="auth-switch">
           Don't have an account?{" "}
@@ -172,6 +256,7 @@ function Login() {
             Create one
           </Link>
         </p>
+
       </div>
     </AuthLayout>
   );

@@ -11,6 +11,7 @@ import {
   getCurrentUser,
   signupUser,
   loginUser,
+  loginWithGoogle as loginWithGoogleRequest,
   logoutUser,
   updateProfile as updateProfileRequest,
   uploadAvatar as uploadAvatarRequest,
@@ -77,6 +78,20 @@ export function AuthProvider({ children }) {
     return data;
   }, []);
 
+  const loginWithGoogle = useCallback(
+  async (credential) => {
+    const data =
+      await loginWithGoogleRequest(
+        credential
+      );
+
+    setUser(data.user);
+
+    return data;
+  },
+  []
+);
+
   /*
    * ==========================================
    * LOGOUT
@@ -126,30 +141,27 @@ export function AuthProvider({ children }) {
    */
 
   const value = useMemo(
-    () => ({
-      user,
-      loading,
-      isAuthenticated: !!user,
+  () => ({
+    user,
+    loading,
+    isAuthenticated: !!user,
 
-      signup,
-      login,
-      logout,
-      updateProfile,
-      uploadAvatar,
+    signup,
+    login,
+    loginWithGoogle,
+    logout,
+    updateProfile,
+    uploadAvatar,
 
-      // Useful for refreshing the user after
-      // profile/session changes.
-      refreshUser: loadUser,
-
-      // Available if a component needs to
-      // update local auth state directly.
-      setUser,
-    }),
+    refreshUser: loadUser,
+    setUser,
+  }),
     [
       user,
       loading,
       signup,
       login,
+      loginWithGoogle,
       logout,
       updateProfile,
       uploadAvatar,

@@ -1,6 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
+const { OAuth2Client } = require("google-auth-library");
 
 const User = require("../models/User");
 const protect = require("../middleware/authMiddleware");
@@ -8,401 +9,556 @@ const uploadAvatar = require("../middleware/avatarUpload");
 
 const router = express.Router();
 
+const googleClient = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID
+);
+
+// ==========================================
+// HELPERS
+// ==========================================
+
 const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
 
-/*
-  GET /api/auth/check-username/:username
-*/
-router.get("/check-username/:username", async (req, res) => {
-  try {
-    const username = req.params.username.toLowerCase().trim();
-
-    if (username.length < 3 || username.length > 30) {
-      return res.json({
-        available: false,
-        message: "Username must be between 3 and 30 characters.",
-      });
+const createToken = (userId) => {
+  return jwt.sign(
+    { userId },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: "7d",
     }
+  );
+};
 
-    if (!USERNAME_REGEX.test(username)) {
-      return res.json({
-        available: false,
-        message:
-          "Username can only contain letters, numbers and underscores.",
-      });
-    }
+const setTokenCookie = (res, token) => {
+  const isProduction =
+    process.env.NODE_ENV === "production";
 
-    const existingUser = await User.findOne({
-      username,
-    });
+  res.cookie("token", token, {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? "none" : "lax",
+    maxAge: 7 * 24 * 60 * 60 * 1000,
+  });
+};
 
-    if (existingUser) {
-      return res.json({
-        available: false,
-        message: "Sorry, this username is already taken.",
-      });
-    }
-
-    return res.json({
-      available: true,
-      message: "Username available.",
-    });
-  } catch (error) {
-    console.error("Username check failed:", error.message);
-
-    return res.status(500).json({
-      available: false,
-      message: "Unable to check username right now.",
-    });
-  }
+const getUserResponse = (user) => ({
+  id: user._id,
+  username: user.username,
+  email: user.email,
+  bio: user.bio,
+  avatar: user.avatar,
+  interests: user.interests,
+  college: user.college,
+  branch: user.branch,
+  semester: user.semester,
+  profileCompleted: user.profileCompleted,
+  authProvider: user.authProvider,
 });
 
-/*
-  POST /api/auth/signup
-*/
+// ==========================================
+// CHECK USERNAME
+// ==========================================
+
+router.get(
+  "/check-username/:username",
+  async (req, res) => {
+    try {
+      const username = req.params.username
+        .trim()
+        .toLowerCase();
+
+      if (!username) {
+        return res.status(400).json({
+          message: "Username is required.",
+        });
+      }
+
+      const exists = await User.exists({
+        username,
+      });
+
+      return res.json({
+        available: !exists,
+      });
+    } catch (error) {
+      console.error(
+        "Check username error:",
+        error
+      );
+
+      return res.status(500).json({
+        message: "Unable to check username.",
+      });
+    }
+  }
+);
+
+// ==========================================
+// SIGNUP
+// ==========================================
+
 router.post("/signup", async (req, res) => {
   try {
-    const { username, email, password } = req.body;
+    const {
+      username,
+      email,
+      password,
+    } = req.body;
 
     if (!username || !email || !password) {
       return res.status(400).json({
-        success: false,
-        message: "Username, email and password are required.",
+        message:
+          "Username, email and password are required.",
       });
     }
 
-    const normalizedUsername = username.toLowerCase().trim();
-    const normalizedEmail = email.toLowerCase().trim();
+    const cleanUsername = username.trim();
+    const cleanEmail = email.trim().toLowerCase();
 
     if (
-      normalizedUsername.length < 3 ||
-      normalizedUsername.length > 30
+      !USERNAME_REGEX.test(cleanUsername)
     ) {
       return res.status(400).json({
-        success: false,
-        message: "Username must be between 3 and 30 characters.",
+        message:
+          "Username can only contain letters, numbers and underscores.",
       });
     }
 
-    if (!USERNAME_REGEX.test(normalizedUsername)) {
+    if (cleanUsername.length < 3) {
       return res.status(400).json({
-        success: false,
         message:
-          "Username can only contain letters, numbers and underscores.",
+          "Username must be at least 3 characters.",
+      });
+    }
+
+    if (cleanUsername.length > 30) {
+      return res.status(400).json({
+        message:
+          "Username cannot exceed 30 characters.",
       });
     }
 
     if (password.length < 6) {
       return res.status(400).json({
-        success: false,
-        message: "Password must be at least 6 characters long.",
-      });
-    }
-
-    const existingUsername = await User.findOne({
-      username: normalizedUsername,
-    });
-
-    if (existingUsername) {
-      return res.status(409).json({
-        success: false,
-        message: "Sorry, this username is already taken.",
+        message:
+          "Password must be at least 6 characters.",
       });
     }
 
     const existingEmail = await User.findOne({
-      email: normalizedEmail,
+      email: cleanEmail,
     });
 
     if (existingEmail) {
       return res.status(409).json({
-        success: false,
-        message: "An account with this email already exists.",
+        message:
+          "An account with this email already exists.",
       });
     }
 
-    const hashedPassword = await bcrypt.hash(password, 12);
+    const existingUsername =
+      await User.findOne({
+        username: cleanUsername,
+      });
 
-    const user = await User.create({
-      username: normalizedUsername,
-      email: normalizedEmail,
-      password: hashedPassword,
-    });
-
-    const token = jwt.sign(
-      {
-        userId: user._id.toString(),
-      },
-      process.env.JWT_SECRET,
-      {
-        expiresIn: "7d",
-      }
-    );
-
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite:
-        process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: "Account created successfully.",
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        bio: user.bio,
-        avatar: user.avatar,
-        interests: user.interests,
-        college: user.college,
-        branch: user.branch,
-        semester: user.semester,
-        profileCompleted: user.profileCompleted,
-      },
-    });
-  } catch (error) {
-    console.error("Signup failed:", error.message);
-
-    if (error.code === 11000) {
-      const duplicateField =
-        Object.keys(error.keyPattern || {})[0];
-
-      if (duplicateField === "username") {
-        return res.status(409).json({
-          success: false,
-          message: "Sorry, this username is already taken.",
-        });
-      }
-
-      if (duplicateField === "email") {
-        return res.status(409).json({
-          success: false,
-          message: "An account with this email already exists.",
-        });
-      }
+    if (existingUsername) {
+      return res.status(409).json({
+        message:
+          "Username is already taken.",
+      });
     }
 
+    const hashedPassword =
+      await bcrypt.hash(password, 12);
+
+    const user = await User.create({
+      username: cleanUsername,
+      email: cleanEmail,
+      password: hashedPassword,
+      authProvider: "local",
+      profileCompleted: false,
+    });
+
+    const token = createToken(user._id);
+
+    setTokenCookie(res, token);
+
+    return res.status(201).json({
+      message: "Account created successfully.",
+      user: getUserResponse(user),
+    });
+  } catch (error) {
+    console.error("Signup error:", error);
+
     return res.status(500).json({
-      success: false,
-      message: "Unable to create account right now.",
+      message: "Unable to create account.",
     });
   }
 });
 
-/*
-  POST /api/auth/login
-*/
+// ==========================================
+// LOGIN
+// ==========================================
+
 router.post("/login", async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const {
+      email,
+      password,
+    } = req.body;
 
     if (!email || !password) {
       return res.status(400).json({
-        success: false,
-        message: "Email and password are required.",
+        message:
+          "Email and password are required.",
       });
     }
 
-    const normalizedEmail = email.toLowerCase().trim();
+    const cleanEmail = email
+      .trim()
+      .toLowerCase();
 
     const user = await User.findOne({
-      email: normalizedEmail,
+      email: cleanEmail,
     });
 
     if (!user) {
       return res.status(401).json({
-        success: false,
-        message: "Invalid email or password.",
+        message:
+          "Invalid email or password.",
       });
     }
 
-    const passwordMatches = await bcrypt.compare(
-      password,
-      user.password
-    );
+    // Google-only account
+    if (!user.password) {
+      return res.status(400).json({
+        message:
+          "This account uses Google login. Please continue with Google.",
+      });
+    }
+
+    const passwordMatches =
+      await bcrypt.compare(
+        password,
+        user.password
+      );
 
     if (!passwordMatches) {
       return res.status(401).json({
-        success: false,
-        message: "Invalid email or password.",
+        message:
+          "Invalid email or password.",
       });
     }
 
-    const token = jwt.sign(
-      {
-        userId: user._id.toString(),
-      },
-      process.env.JWT_SECRET,
-      {
-        expiresIn: "7d",
-      }
-    );
+    const token = createToken(user._id);
 
-    res.cookie("token", token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite:
-        process.env.NODE_ENV === "production" ? "none" : "lax",
-      maxAge: 7 * 24 * 60 * 60 * 1000,
-    });
+    setTokenCookie(res, token);
 
     return res.json({
-      success: true,
       message: "Login successful.",
-      user: {
-        id: user._id,
-        username: user.username,
-        email: user.email,
-        bio: user.bio,
-        avatar: user.avatar,
-        interests: user.interests,
-        college: user.college,
-        branch: user.branch,
-        semester: user.semester,
-        profileCompleted: user.profileCompleted,
-      },
+      user: getUserResponse(user),
     });
   } catch (error) {
-    console.error("Login failed:", error.message);
+    console.error("Login error:", error);
 
     return res.status(500).json({
-      success: false,
-      message: "Unable to login right now.",
+      message: "Unable to log in.",
     });
   }
 });
 
-/*
-  GET /api/auth/me
-*/
-router.get("/me", protect, async (req, res) => {
-  return res.json({
-    success: true,
-    user: {
-      id: req.user._id,
-      username: req.user.username,
-      email: req.user.email,
-      bio: req.user.bio,
-      avatar: req.user.avatar,
-      interests: req.user.interests,
-      college: req.user.college,
-      branch: req.user.branch,
-      semester: req.user.semester,
-      profileCompleted: req.user.profileCompleted,
-    },
-  });
-});
+// ==========================================
+// GOOGLE LOGIN
+// ==========================================
 
-/*
-  POST /api/auth/logout
-*/
-router.post("/logout", (req, res) => {
-  res.clearCookie("token", {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite:
-      process.env.NODE_ENV === "production" ? "none" : "lax",
-  });
+router.post(
+  "/google",
+  async (req, res) => {
+    try {
+      const { credential } = req.body;
 
-  return res.json({
-    success: true,
-    message: "Logged out successfully.",
-  });
-});
-
-/*
-  PUT /api/auth/profile
-*/
-router.put("/profile", protect, async (req, res) => {
-  try {
-    const {
-      bio,
-      interests,
-      college,
-      branch,
-      semester,
-    } = req.body;
-
-    if (!Array.isArray(interests)) {
-      return res.status(400).json({
-        success: false,
-        message: "Interests must be an array.",
-      });
-    }
-
-    if (interests.length > 10) {
-      return res.status(400).json({
-        success: false,
-        message: "You can select up to 10 interests.",
-      });
-    }
-
-    if (typeof bio === "string" && bio.length > 160) {
-      return res.status(400).json({
-        success: false,
-        message: "Bio cannot exceed 160 characters.",
-      });
-    }
-
-    const updatedUser = await User.findByIdAndUpdate(
-      req.user._id,
-      {
-        bio: typeof bio === "string" ? bio.trim() : "",
-        interests,
-        college:
-          typeof college === "string" ? college.trim() : "",
-        branch:
-          typeof branch === "string" ? branch.trim() : "",
-        semester: semester || null,
-        profileCompleted: true,
-      },
-      {
-        new: true,
-        runValidators: true,
+      if (!credential) {
+        return res.status(400).json({
+          message:
+            "Google credential is required.",
+        });
       }
-    ).select("-password");
 
-    if (!updatedUser) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found.",
+      if (!process.env.GOOGLE_CLIENT_ID) {
+        console.error(
+          "GOOGLE_CLIENT_ID is not configured."
+        );
+
+        return res.status(500).json({
+          message:
+            "Google login is not configured on the server.",
+        });
+      }
+
+      // Verify Google ID token
+      const ticket =
+        await googleClient.verifyIdToken({
+          idToken: credential,
+          audience:
+            process.env.GOOGLE_CLIENT_ID,
+        });
+
+      const payload =
+        ticket.getPayload();
+
+      if (!payload) {
+        return res.status(401).json({
+          message:
+            "Invalid Google credential.",
+        });
+      }
+
+      const {
+        sub: googleId,
+        email,
+        email_verified: emailVerified,
+        name,
+        picture,
+      } = payload;
+
+      if (!email || !emailVerified) {
+        return res.status(401).json({
+          message:
+            "Your Google email could not be verified.",
+        });
+      }
+
+      const cleanEmail =
+        email.trim().toLowerCase();
+
+      // ==========================================
+      // FIND EXISTING GOOGLE ACCOUNT
+      // ==========================================
+
+      let user = await User.findOne({
+        googleId,
+      });
+
+      // ==========================================
+      // IF GOOGLE ACCOUNT DOESN'T EXIST,
+      // CHECK WHETHER EMAIL ALREADY EXISTS
+      // ==========================================
+
+      if (!user) {
+        const existingUser =
+          await User.findOne({
+            email: cleanEmail,
+          });
+
+        if (existingUser) {
+          return res.status(409).json({
+            message:
+              "An account with this email already exists. Log in with your email and password first.",
+          });
+        }
+
+        // ==========================================
+        // GENERATE UNIQUE USERNAME
+        // ==========================================
+
+        let baseUsername =
+          (name || "user")
+            .replace(/[^a-zA-Z0-9]/g, "")
+            .toLowerCase();
+
+        if (baseUsername.length < 3) {
+          baseUsername = "user";
+        }
+
+        baseUsername =
+          baseUsername.substring(0, 25);
+
+        let username = baseUsername;
+        let counter = 1;
+
+        while (
+          await User.exists({ username })
+        ) {
+          username =
+            `${baseUsername}${counter}`;
+          counter++;
+        }
+
+        // ==========================================
+        // CREATE GOOGLE USER
+        // ==========================================
+
+        user = await User.create({
+          username,
+          email: cleanEmail,
+          googleId,
+          authProvider: "google",
+          avatar: picture || "",
+          profileCompleted: false,
+        });
+      }
+
+      // ==========================================
+      // CREATE COCHAT JWT
+      // ==========================================
+
+      const token = createToken(user._id);
+
+      setTokenCookie(res, token);
+
+      return res.json({
+        message:
+          "Google login successful.",
+        user: getUserResponse(user),
+      });
+    } catch (error) {
+      console.error(
+        "Google login error:",
+        error
+      );
+
+      return res.status(401).json({
+        message:
+          "Unable to authenticate with Google. Please try again.",
       });
     }
+  }
+);
+
+// ==========================================
+// CURRENT USER
+// ==========================================
+
+router.get(
+  "/me",
+  protect,
+  async (req, res) => {
+    try {
+      return res.json({
+        user: getUserResponse(
+          req.user
+        ),
+      });
+    } catch (error) {
+      console.error(
+        "Get current user error:",
+        error
+      );
+
+      return res.status(500).json({
+        message:
+          "Unable to get current user.",
+      });
+    }
+  }
+);
+
+// ==========================================
+// LOGOUT
+// ==========================================
+
+router.post(
+  "/logout",
+  (req, res) => {
+    const isProduction =
+      process.env.NODE_ENV === "production";
+
+    res.clearCookie("token", {
+      httpOnly: true,
+      secure: isProduction,
+      sameSite: isProduction
+        ? "none"
+        : "lax",
+    });
 
     return res.json({
-      success: true,
-      message: "Profile updated successfully.",
-      user: {
-        id: updatedUser._id,
-        username: updatedUser.username,
-        email: updatedUser.email,
-        bio: updatedUser.bio,
-        avatar: updatedUser.avatar,
-        interests: updatedUser.interests,
-        college: updatedUser.college,
-        branch: updatedUser.branch,
-        semester: updatedUser.semester,
-        profileCompleted: updatedUser.profileCompleted,
-      },
-    });
-  } catch (error) {
-    console.error("Profile update failed:", error.message);
-
-    return res.status(500).json({
-      success: false,
-      message: "Unable to update profile right now.",
+      message:
+        "Logged out successfully.",
     });
   }
-});
+);
 
-/*
-  POST /api/auth/profile/avatar
+// ==========================================
+// UPDATE PROFILE
+// ==========================================
 
-  Uploads the user's avatar to Cloudinary.
-*/
+router.put(
+  "/profile",
+  protect,
+  async (req, res) => {
+    try {
+      const {
+        bio,
+        interests,
+        college,
+        branch,
+        semester,
+      } = req.body;
+
+      const user = await User.findById(
+        req.user._id
+      );
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found.",
+        });
+      }
+
+      if (bio !== undefined) {
+        user.bio = bio;
+      }
+
+      if (interests !== undefined) {
+        user.interests = interests;
+      }
+
+      if (college !== undefined) {
+        user.college = college;
+      }
+
+      if (branch !== undefined) {
+        user.branch = branch;
+      }
+
+      if (semester !== undefined) {
+        user.semester = semester;
+      }
+
+      // Mark profile complete when
+      // onboarding information exists.
+      user.profileCompleted = Boolean(
+        user.college &&
+        user.branch &&
+        user.semester &&
+        user.interests?.length
+      );
+
+      await user.save();
+
+      return res.json({
+        message:
+          "Profile updated successfully.",
+        user: getUserResponse(user),
+      });
+    } catch (error) {
+      console.error(
+        "Update profile error:",
+        error
+      );
+
+      return res.status(500).json({
+        message:
+          "Unable to update profile.",
+      });
+    }
+  }
+);
+
+// ==========================================
+// UPLOAD AVATAR
+// ==========================================
+
 router.post(
   "/profile/avatar",
   protect,
@@ -411,52 +567,42 @@ router.post(
     try {
       if (!req.file) {
         return res.status(400).json({
-          success: false,
-          message: "Please select an image.",
+          message:
+            "Please select an image.",
         });
       }
 
-      const updatedUser = await User.findByIdAndUpdate(
-        req.user._id,
-        {
-          avatar: req.file.path,
-        },
-        {
-          new: true,
-          runValidators: true,
-        }
-      ).select("-password");
+      const user = await User.findById(
+        req.user._id
+      );
 
-      if (!updatedUser) {
+      if (!user) {
         return res.status(404).json({
-          success: false,
           message: "User not found.",
         });
       }
 
-      return res.status(200).json({
-        success: true,
-        message: "Avatar updated successfully.",
-        user: {
-          id: updatedUser._id,
-          username: updatedUser.username,
-          email: updatedUser.email,
-          bio: updatedUser.bio,
-          avatar: updatedUser.avatar,
-          interests: updatedUser.interests,
-          college: updatedUser.college,
-          branch: updatedUser.branch,
-          semester: updatedUser.semester,
-          profileCompleted: updatedUser.profileCompleted,
-        },
+      user.avatar =
+        req.file.path ||
+        req.file.secure_url ||
+        "";
+
+      await user.save();
+
+      return res.json({
+        message:
+          "Avatar updated successfully.",
+        user: getUserResponse(user),
       });
     } catch (error) {
-      console.error("Avatar upload failed:", error);
+      console.error(
+        "Upload avatar error:",
+        error
+      );
 
       return res.status(500).json({
-        success: false,
         message:
-          error.message || "Unable to upload avatar right now.",
+          "Unable to upload avatar.",
       });
     }
   }

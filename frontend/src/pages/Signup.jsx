@@ -10,6 +10,7 @@ import {
   LoaderCircle,
 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { GoogleLogin } from "@react-oauth/google";
 
 import { useAuth } from "../context/useAuth";
 import { checkUsername } from "../services/authService";
@@ -18,7 +19,7 @@ import AuthLayout from "../components/AuthLayout";
 
 function Signup() {
   const navigate = useNavigate();
-  const { signup } = useAuth();
+  const { signup, loginWithGoogle } = useAuth();
 
   const [formData, setFormData] = useState({
     username: "",
@@ -33,6 +34,7 @@ function Signup() {
 
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const handleChange = (e) => {
     const { id, value } = e.target;
@@ -48,65 +50,54 @@ function Signup() {
     }
   };
 
-useEffect(() => {
-  const username =
-    formData.username.trim();
+  useEffect(() => {
+    const username = formData.username.trim();
 
-  const timer = setTimeout(
-    async () => {
-      if (!username) {
-        setUsernameStatus("idle");
-        setUsernameMessage("");
-        return;
-      }
+    const timer = setTimeout(
+      async () => {
+        if (!username) {
+          setUsernameStatus("idle");
+          setUsernameMessage("");
+          return;
+        }
 
-      if (username.length < 3) {
-        setUsernameStatus("invalid");
-        setUsernameMessage(
-          "Username must be at least 3 characters."
-        );
-        return;
-      }
-
-      try {
-        setUsernameStatus("checking");
-
-        const data =
-          await checkUsername(
-            username
-          );
-
-        if (data.available) {
-          setUsernameStatus(
-            "available"
-          );
-
+        if (username.length < 3) {
+          setUsernameStatus("invalid");
           setUsernameMessage(
-            "Username is available."
+            "Username must be at least 3 characters."
           );
-        } else {
-          setUsernameStatus("taken");
+          return;
+        }
 
+        try {
+          setUsernameStatus("checking");
+
+          const data = await checkUsername(username);
+
+          if (data.available) {
+            setUsernameStatus("available");
+            setUsernameMessage("Username is available.");
+          } else {
+            setUsernameStatus("taken");
+            setUsernameMessage(
+              data.message || "Username is already taken."
+            );
+          }
+        } catch {
+          setUsernameStatus("error");
           setUsernameMessage(
-            data.message ||
-              "Username is already taken."
+            "Unable to check username."
           );
         }
-      } catch {
-        setUsernameStatus("error");
+      },
+      username ? 500 : 0
+    );
 
-        setUsernameMessage(
-          "Unable to check username."
-        );
-      }
-    },
-    username ? 500 : 0
-  );
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [formData.username]);
 
-  return () => {
-    clearTimeout(timer);
-  };
-}, [formData.username]);
   const handleSubmit = async (e) => {
     e.preventDefault();
 
@@ -129,6 +120,40 @@ useEffect(() => {
     }
   };
 
+  const handleGoogleSuccess = async (credentialResponse) => {
+    if (!credentialResponse?.credential) {
+      setMessage("Google signup failed. Please try again.");
+      return;
+    }
+
+    try {
+      setGoogleLoading(true);
+      setMessage("");
+
+      const data = await loginWithGoogle(
+        credentialResponse.credential
+      );
+
+      if (data.user.profileCompleted) {
+        navigate("/dashboard");
+      } else {
+        navigate("/onboarding");
+      }
+    } catch (error) {
+      setMessage(
+        error.message ||
+          "Unable to sign up with Google."
+      );
+    } finally {
+      setGoogleLoading(false);
+    }
+  };
+
+  const handleGoogleError = () => {
+    setGoogleLoading(false);
+    setMessage("Google signup failed. Please try again.");
+  };
+
   return (
     <AuthLayout>
       <div className="auth-card">
@@ -145,13 +170,26 @@ useEffect(() => {
           </p>
         </div>
 
-        <button
-          type="button"
-          className="auth-google-btn"
-        >
-          <span className="google-icon">G</span>
-          Continue with Google
-        </button>
+        {/* Google Signup */}
+
+        <div className="google-login-wrapper">
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={handleGoogleError}
+            useOneTap={false}
+            theme="outline"
+            size="large"
+            text="continue_with"
+            shape="rectangular"
+            width="100%"
+          />
+
+          {googleLoading && (
+            <p className="google-loading">
+              Creating your account with Google...
+            </p>
+          )}
+        </div>
 
         <div className="auth-divider">
           <span>or</span>
@@ -304,6 +342,7 @@ useEffect(() => {
             className="auth-submit"
             disabled={
               loading ||
+              googleLoading ||
               usernameStatus !== "available"
             }
           >
