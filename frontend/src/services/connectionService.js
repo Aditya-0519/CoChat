@@ -1,17 +1,30 @@
 import { API_BASE_URL } from "./apiConfig";
 
-const API_URL = `${API_BASE_URL}/connections`;
-async function request(path, options = {}) {
-  const response = await fetch(`${API_URL}${path}`, {
-    credentials: "include",
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-    },
-    ...options,
-  });
+const API_URL =
+  `${API_BASE_URL}/connections`;
 
-  const data = await response.json().catch(() => ({}));
+
+async function request(
+  path,
+  options = {}
+) {
+  const response = await fetch(
+    `${API_URL}${path}`,
+    {
+      credentials: "include",
+      headers: {
+        "Content-Type":
+          "application/json",
+        ...(options.headers || {}),
+      },
+      ...options,
+    }
+  );
+
+  const data =
+    await response
+      .json()
+      .catch(() => ({}));
 
   if (!response.ok) {
     throw new Error(
@@ -23,39 +36,113 @@ async function request(path, options = {}) {
   return data;
 }
 
-// Get all accepted connections of the current user.
+
+// ============================================================
+// ACCEPTED CONNECTIONS
+// ============================================================
+
 export const getConnections = () =>
   request("/");
 
-// Get the connection status between the current user
-// and another user.
-export const getConnectionStatus = (userId) =>
-  request(`/status/${userId}`);
 
-// Send a connection request.
-export const sendConnectionRequest = (userId) =>
-  request(`/request/${userId}`, {
-    method: "POST",
-  });
+// ============================================================
+// CONNECTION STATUS
+// ============================================================
 
-// Get incoming connection requests.
-export const getConnectionRequests = () =>
-  request("/requests");
+export const getConnectionStatus = (
+  userId
+) =>
+  request(
+    `/status/${userId}`
+  );
 
-// Accept an incoming connection request.
-export const acceptConnectionRequest = (connectionId) =>
-  request(`/${connectionId}/accept`, {
-    method: "PATCH",
-  });
 
-// Reject an incoming connection request.
-export const rejectConnectionRequest = (connectionId) =>
-  request(`/${connectionId}/reject`, {
-    method: "PATCH",
-  });
+// ============================================================
+// SEND CONNECTION REQUEST
+// ============================================================
 
-// Remove an existing connection.
-export const removeConnection = (userId) =>
-  request(`/${userId}`, {
-    method: "DELETE",
-  });
+export const sendConnectionRequest = (
+  userId
+) =>
+  request(
+    `/request/${userId}`,
+    {
+      method: "POST",
+    }
+  );
+
+
+// ============================================================
+// INCOMING CONNECTION REQUESTS
+// ============================================================
+
+export const getConnectionRequests =
+  () =>
+    request("/requests");
+
+
+// ============================================================
+// SENT CONNECTION REQUESTS
+// ============================================================
+
+export const getSentConnectionRequests =
+  () =>
+    request(
+      "/requests/sent"
+    );
+
+
+// ============================================================
+// CONNECTION REQUEST COUNT
+// ============================================================
+
+export const getConnectionRequestCount =
+  () =>
+    request(
+      "/requests/count"
+    );
+
+
+// ============================================================
+// ACCEPT
+// ============================================================
+
+export const acceptConnectionRequest = (
+  connectionId
+) =>
+  request(
+    `/${connectionId}/accept`,
+    {
+      method: "PATCH",
+    }
+  );
+
+
+// ============================================================
+// REJECT
+// ============================================================
+
+export const rejectConnectionRequest = (
+  connectionId
+) =>
+  request(
+    `/${connectionId}/reject`,
+    {
+      method: "PATCH",
+    }
+  );
+
+
+// ============================================================
+// REMOVE CONNECTION
+// ============================================================
+
+export const removeConnection = (
+  userId
+) =>
+  request(
+    `/${userId}`,
+    {
+      method: "DELETE",
+    }
+  );
