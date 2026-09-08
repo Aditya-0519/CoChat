@@ -291,14 +291,9 @@ function AppShell({ children }) {
       return undefined;
     }
 
-    const handleNewConnectionRequest =
-      () => {
-        setPendingRequestCount(
-          (current) =>
-            current + 1
-        );
-      };
-
+   const handleNewConnectionRequest = () => {
+  loadPendingRequestCount();
+};
     socket.on(
       "connection-request",
       handleNewConnectionRequest

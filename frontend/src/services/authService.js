@@ -1,182 +1,282 @@
-import { API_BASE_URL } from "./apiConfig";
+import {
+  API_BASE_URL,
+} from "./apiConfig";
 
-const API_URL = `${API_BASE_URL}`;
-export const signupUser = async (userData) => {
-  const response = await fetch(`${API_URL}/auth/signup`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    credentials: "include",
-    body: JSON.stringify(userData),
-  });
+const API_URL =
+  API_BASE_URL;
 
-  const data = await response.json();
+/*
+|--------------------------------------------------------------------------
+| COMMON RESPONSE HANDLER
+|--------------------------------------------------------------------------
+*/
 
-  if (!response.ok) {
-    throw new Error(
-      data.message || "Something went wrong."
-    );
-  }
-
-  return data;
-};
-
-export const checkUsername = async (username) => {
-  const response = await fetch(
-    `${API_URL}/auth/check-username/${encodeURIComponent(
-      username
-    )}`
-  );
-
-  const data = await response.json();
+async function parseResponse(
+  response
+) {
+  const data =
+    await response
+      .json()
+      .catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(
-      data.message || "Unable to check username."
-    );
-  }
+    const error =
+      new Error(
+        data?.message ||
+          "Something went wrong. Please try again."
+      );
 
-  return data;
-};
+    /*
+     * Preserve HTTP status.
+     *
+     * AuthProvider uses this to distinguish:
+     *
+     * 401 = genuinely logged out
+     *
+     * network/5xx = possibly temporary
+     */
 
-export const loginUser = async (credentials) => {
-  const response = await fetch(`${API_URL}/auth/login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    credentials: "include",
-    body: JSON.stringify(credentials),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      data.message || "Unable to login."
-    );
-  }
-
-  return data;
-};
-
-export const getCurrentUser = async () => {
-  const response = await fetch(`${API_URL}/auth/me`, {
-    credentials: "include",
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    const error = new Error(
-      data.message || "Not authenticated."
-    );
-
-    // Let callers (AuthProvider) tell a real "not logged in"
-    // response apart from a transient server/network failure.
-    error.status = response.status;
+    error.status =
+      response.status;
 
     throw error;
   }
 
   return data;
-};
+}
 
-export const logoutUser = async () => {
-  const response = await fetch(
-    `${API_URL}/auth/logout`,
-    {
-      method: "POST",
-      credentials: "include",
-    }
-  );
+/*
+|--------------------------------------------------------------------------
+| SIGNUP
+|--------------------------------------------------------------------------
+*/
 
-  const data = await response.json();
+export const signupUser =
+  async (userData) => {
+    const response =
+      await fetch(
+        `${API_URL}/auth/signup`,
+        {
+          method: "POST",
 
-  if (!response.ok) {
-    throw new Error(
-      data.message || "Unable to logout."
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          credentials:
+            "include",
+
+          body: JSON.stringify(
+            userData
+          ),
+        }
+      );
+
+    return parseResponse(
+      response
     );
-  }
+  };
 
-  return data;
-};
+/*
+|--------------------------------------------------------------------------
+| CHECK USERNAME
+|--------------------------------------------------------------------------
+*/
 
-export const updateProfile = async (profileData) => {
-  const response = await fetch(
-    `${API_URL}/auth/profile`,
-    {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify(profileData),
-    }
-  );
+export const checkUsername =
+  async (username) => {
+    const response =
+      await fetch(
+        `${API_URL}/auth/check-username/${encodeURIComponent(
+          username
+        )}`,
+        {
+          credentials:
+            "include",
+        }
+      );
 
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      data.message || "Unable to update profile."
+    return parseResponse(
+      response
     );
-  }
+  };
 
-  return data;
-};
+/*
+|--------------------------------------------------------------------------
+| LOGIN
+|--------------------------------------------------------------------------
+*/
 
-export const uploadAvatar = async (file) => {
-  const formData = new FormData();
+export const loginUser =
+  async (credentials) => {
+    const response =
+      await fetch(
+        `${API_URL}/auth/login`,
+        {
+          method: "POST",
 
-  formData.append("avatar", file);
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
 
-  const response = await fetch(
-    `${API_URL}/auth/profile/avatar`,
-    {
-      method: "POST",
-      credentials: "include",
-      body: formData,
-    }
-  );
+          credentials:
+            "include",
 
-  const data = await response.json();
+          body: JSON.stringify(
+            credentials
+          ),
+        }
+      );
 
-  if (!response.ok) {
-    throw new Error(
-      data.message || "Unable to upload avatar."
+    return parseResponse(
+      response
     );
-  }
+  };
 
-  return data;
-};
+/*
+|--------------------------------------------------------------------------
+| CURRENT USER
+|--------------------------------------------------------------------------
+*/
 
-export const loginWithGoogle = async (
-  credential
-) => {
-  const response = await fetch(
-    `${API_URL}/auth/google`,
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      credentials: "include",
-      body: JSON.stringify({
-        credential,
-      }),
-    }
-  );
+export const getCurrentUser =
+  async () => {
+    const response =
+      await fetch(
+        `${API_URL}/auth/me`,
+        {
+          credentials:
+            "include",
+        }
+      );
 
-  const data = await response.json();
-
-  if (!response.ok) {
-    throw new Error(
-      data.message ||
-        "Unable to sign in with Google."
+    return parseResponse(
+      response
     );
-  }
+  };
 
-  return data;
-};
+/*
+|--------------------------------------------------------------------------
+| LOGOUT
+|--------------------------------------------------------------------------
+*/
+
+export const logoutUser =
+  async () => {
+    const response =
+      await fetch(
+        `${API_URL}/auth/logout`,
+        {
+          method: "POST",
+
+          credentials:
+            "include",
+        }
+      );
+
+    return parseResponse(
+      response
+    );
+  };
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE PROFILE
+|--------------------------------------------------------------------------
+*/
+
+export const updateProfile =
+  async (profileData) => {
+    const response =
+      await fetch(
+        `${API_URL}/auth/profile`,
+        {
+          method: "PUT",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          credentials:
+            "include",
+
+          body: JSON.stringify(
+            profileData
+          ),
+        }
+      );
+
+    return parseResponse(
+      response
+    );
+  };
+
+/*
+|--------------------------------------------------------------------------
+| UPLOAD AVATAR
+|--------------------------------------------------------------------------
+*/
+
+export const uploadAvatar =
+  async (file) => {
+    const formData =
+      new FormData();
+
+    formData.append(
+      "avatar",
+      file
+    );
+
+    const response =
+      await fetch(
+        `${API_URL}/auth/profile/avatar`,
+        {
+          method: "POST",
+
+          credentials:
+            "include",
+
+          body: formData,
+        }
+      );
+
+    return parseResponse(
+      response
+    );
+  };
+
+/*
+|--------------------------------------------------------------------------
+| GOOGLE LOGIN
+|--------------------------------------------------------------------------
+*/
+
+export const loginWithGoogle =
+  async (credential) => {
+    const response =
+      await fetch(
+        `${API_URL}/auth/google`,
+        {
+          method: "POST",
+
+          headers: {
+            "Content-Type":
+              "application/json",
+          },
+
+          credentials:
+            "include",
+
+          body: JSON.stringify({
+            credential,
+          }),
+        }
+      );
+
+    return parseResponse(
+      response
+    );
+  };

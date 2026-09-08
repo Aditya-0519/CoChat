@@ -21,10 +21,7 @@ const router = express.Router();
 |--------------------------------------------------------------------------
 */
 
-const getConversationForUser = async (
-  conversationId,
-  userId
-) => {
+const getConversationForUser = async (conversationId, userId) => {
   return Conversation.findOne({
     _id: conversationId,
     participants: userId,
@@ -35,16 +32,20 @@ const isValidObjectId = (value) =>
   mongoose.Types.ObjectId.isValid(value);
 
 /*
-  Cursor format:
-
-  {
-    createdAt: ISO date,
-    id: message id
-  }
-
-  We encode this so the frontend can safely
-  send it back to the API.
+|--------------------------------------------------------------------------
+| CURSOR HELPERS
+|--------------------------------------------------------------------------
+|
+| Cursor format:
+|
+| {
+|   createdAt: ISO date,
+|   id: message id
+| }
+|
+|--------------------------------------------------------------------------
 */
+
 const encodeCursor = (message) => {
   if (!message) {
     return null;
@@ -55,9 +56,7 @@ const encodeCursor = (message) => {
     id: message._id.toString(),
   });
 
-  return Buffer.from(payload).toString(
-    "base64url"
-  );
+  return Buffer.from(payload).toString("base64url");
 };
 
 const decodeCursor = (cursor) => {
@@ -66,14 +65,12 @@ const decodeCursor = (cursor) => {
   }
 
   try {
-    const decoded =
-      Buffer.from(
-        cursor,
-        "base64url"
-      ).toString("utf8");
+    const decoded = Buffer.from(
+      cursor,
+      "base64url"
+    ).toString("utf8");
 
-    const parsed =
-      JSON.parse(decoded);
+    const parsed = JSON.parse(decoded);
 
     if (
       !parsed?.createdAt ||
@@ -82,14 +79,9 @@ const decodeCursor = (cursor) => {
       return null;
     }
 
-    const createdAt =
-      new Date(parsed.createdAt);
+    const createdAt = new Date(parsed.createdAt);
 
-    if (
-      Number.isNaN(
-        createdAt.getTime()
-      )
-    ) {
+    if (Number.isNaN(createdAt.getTime())) {
       return null;
     }
 
@@ -103,23 +95,22 @@ const decodeCursor = (cursor) => {
 };
 
 /*
-  Create a receipt entry for every recipient.
-
-  The sender does NOT need a receipt for their own
-  message.
-
-  We keep receipts on the message because delivery
-  and read state belongs to each recipient.
+|--------------------------------------------------------------------------
+| RECEIPTS
+|--------------------------------------------------------------------------
 */
-const buildReceipts = (
-  participants,
-  senderId
-) => {
+
+const buildReceipts = (participants, senderId) => {
+  if (!Array.isArray(participants)) {
+    return [];
+  }
+
   return participants
     .filter(
       (participant) =>
+        participant &&
         participant.toString() !==
-        senderId.toString()
+          senderId.toString()
     )
     .map((participant) => ({
       user: participant,
@@ -135,7 +126,6 @@ const buildReceipts = (
 */
 
 const notifyMessageRecipient = async ({
-  req,
   recipient,
   actor,
   type,
@@ -147,50 +137,48 @@ const notifyMessageRecipient = async ({
 }) => {
   try {
     /*
-      Always create the in-app notification.
-    */
-    const notification =
-      await createNotification({
-        recipient,
-        actor,
-        type,
-        title,
-        body,
-        url,
-      });
+     * Always create the in-app notification.
+     */
+    const notification = await createNotification({
+      recipient,
+      actor,
+      type,
+      title,
+      body,
+      url,
+    });
 
     /*
-      Conversation mute only affects push.
-    */
+     * Conversation mute only affects push notifications.
+     */
     const setting = conversationId
       ? await ConversationSetting.findOne({
-          conversation:
-            conversationId,
+          conversation: conversationId,
           user: recipient,
         })
       : null;
 
     if (!setting?.muted) {
-      await sendPushNotification(
-        recipient,
-        {
-          title,
-          body,
-          type,
-          url,
-          conversationId:
-            conversationId
-              ? conversationId.toString()
-              : undefined,
-          tag:
-            tag ||
-            `cochat-${type}-${Date.now()}`,
-        }
-      );
+      await sendPushNotification(recipient, {
+        title,
+        body,
+        type,
+        url,
+        conversationId: conversationId
+          ? conversationId.toString()
+          : undefined,
+        tag:
+          tag ||
+          `cochat-${type}-${Date.now()}`,
+      });
     }
 
     return notification;
   } catch (error) {
+    /*
+     * Notification failure should NOT make
+     * the actual message fail.
+     */
     console.error(
       "Message notification error:",
       error
@@ -208,21 +196,8 @@ const notifyMessageRecipient = async ({
 | Paginated message history.
 |
 | Query:
-|
 |   ?limit=30
 |   ?before=<cursor>
-|
-| Behaviour:
-|
-|   First request:
-|     returns newest 30 messages.
-|
-|   Next request:
-|     returns 30 messages older than cursor.
-|
-| Response messages are returned oldest -> newest
-| inside the requested page so the frontend can
-| render naturally.
 |
 |--------------------------------------------------------------------------
 */
@@ -232,19 +207,12 @@ router.get(
   protect,
   async (req, res) => {
     try {
-      const {
-        conversationId,
-      } = req.params;
+      const { conversationId } = req.params;
 
-      if (
-        !isValidObjectId(
-          conversationId
-        )
-      ) {
+      if (!isValidObjectId(conversationId)) {
         return res.status(400).json({
           success: false,
-          message:
-            "Invalid conversation ID.",
+          message: "Invalid conversation ID.",
         });
       }
 
@@ -257,40 +225,62 @@ router.get(
       if (!conversation) {
         return res.status(404).json({
           success: false,
-          message:
-            "Conversation not found.",
+          message: "Conversation not found.",
         });
       }
 
       /*
-        Limit is intentionally capped.
+       * Prevent malformed direct/self conversations
+       * from being opened as normal 1:1 chats.
+       */
+      if (
+        !conversation.isGroup &&
+        conversation.participants.length !== 2
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid direct conversation.",
+        });
+      }
 
-        This prevents a client from requesting
-        thousands of messages in one HTTP request.
-      */
+      const participantIds =
+        conversation.participants.map(
+          (participant) =>
+            participant.toString()
+        );
+
+      if (
+        !conversation.isGroup &&
+        new Set(participantIds).size !==
+          participantIds.length
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid direct conversation.",
+        });
+      }
+
+      /*
+       * Limit is capped to protect the API.
+       */
       const requestedLimit =
         Number.parseInt(
           req.query.limit,
           10
         );
 
-      const limit =
-        Number.isFinite(
-          requestedLimit
-        )
-          ? Math.min(
-              Math.max(
-                requestedLimit,
-                1
-              ),
-              100
-            )
-          : 30;
+      const limit = Number.isFinite(
+        requestedLimit
+      )
+        ? Math.min(
+            Math.max(requestedLimit, 1),
+            100
+          )
+        : 30;
 
-      const cursor =
-        decodeCursor(
-          req.query.before
-        );
+      const cursor = decodeCursor(
+        req.query.before
+      );
 
       if (
         req.query.before &&
@@ -298,47 +288,44 @@ router.get(
       ) {
         return res.status(400).json({
           success: false,
-          message:
-            "Invalid message cursor.",
+          message: "Invalid message cursor.",
         });
       }
 
       /*
-        Build cursor query.
-
-        We use createdAt + _id together so two messages
-        with the same timestamp do not create gaps.
-      */
+       * Base message query.
+       */
       const query = {
-        conversation:
-          conversationId,
+        conversation: conversationId,
       };
 
+      /*
+       * Cursor pagination.
+       *
+       * createdAt + _id prevents gaps when
+       * multiple messages share the same timestamp.
+       */
       if (cursor) {
         query.$or = [
           {
             createdAt: {
-              $lt:
-                cursor.createdAt,
+              $lt: cursor.createdAt,
             },
           },
           {
             createdAt:
               cursor.createdAt,
             _id: {
-              $lt:
-                cursor.id,
+              $lt: cursor.id,
             },
           },
         ];
       }
 
       /*
-        Fetch one extra message.
-
-        If we receive limit + 1, there are older
-        messages remaining.
-      */
+       * Fetch one extra message to determine
+       * whether older messages exist.
+       */
       const fetchedMessages =
         await Message.find(query)
           .populate(
@@ -353,29 +340,20 @@ router.get(
           .lean();
 
       const hasMore =
-        fetchedMessages.length >
-        limit;
+        fetchedMessages.length > limit;
 
-      const pageMessages =
-        hasMore
-          ? fetchedMessages.slice(
-              0,
-              limit
-            )
-          : fetchedMessages;
+      const pageMessages = hasMore
+        ? fetchedMessages.slice(
+            0,
+            limit
+          )
+        : fetchedMessages;
 
       /*
-        We fetched newest -> oldest for efficient
-        pagination.
-
-        Frontend wants oldest -> newest.
-      */
+       * API returns oldest -> newest.
+       */
       pageMessages.reverse();
 
-      /*
-        The oldest message in this page becomes
-        the cursor for the next request.
-      */
       const oldestMessage =
         pageMessages[0] || null;
 
@@ -387,18 +365,11 @@ router.get(
           : null;
 
       /*
-        Make sure the conversation has participant
-        read-state entries.
-
-        This also backfills conversations created
-        before Phase 2.
-      */
+       * Backfill participant state entries
+       * for older conversations.
+       */
       conversation.ensureParticipantStates();
 
-      /*
-        We don't need to save if nothing changed,
-        but old conversations may not have states.
-      */
       if (
         conversation.isModified(
           "participantStates"
@@ -460,6 +431,9 @@ router.post(
           ? text.trim()
           : "";
 
+      /*
+       * Validate request body.
+       */
       if (
         !conversationId ||
         !cleanText
@@ -471,6 +445,9 @@ router.post(
         });
       }
 
+      /*
+       * Validate conversation ID.
+       */
       if (
         !isValidObjectId(
           conversationId
@@ -483,6 +460,9 @@ router.post(
         });
       }
 
+      /*
+       * Prevent excessively large messages.
+       */
       if (cleanText.length > 2000) {
         return res.status(400).json({
           success: false,
@@ -491,6 +471,10 @@ router.post(
         });
       }
 
+      /*
+       * Make sure the authenticated user
+       * belongs to this conversation.
+       */
       const conversation =
         await getConversationForUser(
           conversationId,
@@ -505,34 +489,109 @@ router.post(
         });
       }
 
+      const currentUserId =
+        req.user._id.toString();
+
+      const participants =
+        Array.isArray(
+          conversation.participants
+        )
+          ? conversation.participants
+          : [];
+
+      const participantIds =
+        participants.map(
+          (participant) =>
+            participant.toString()
+        );
+
       /*
-      ==========================================================
-      DIRECT MESSAGE
-      ==========================================================
+      |--------------------------------------------------------------------------
+      | DIRECT CONVERSATION VALIDATION
+      |--------------------------------------------------------------------------
+      |
+      | A valid 1:1 conversation MUST:
+      |
+      |   1. Have exactly two participants.
+      |   2. Have two different participants.
+      |   3. Include the authenticated user.
+      |
+      | This completely prevents self-chat.
+      |
+      |--------------------------------------------------------------------------
       */
 
-      if (
-        conversation.type ===
-        "direct"
-      ) {
-        const otherParticipant =
-          conversation.participants.find(
-            (participant) =>
-              participant.toString() !==
-              req.user._id.toString()
+      if (!conversation.isGroup) {
+        const hasExactlyTwoParticipants =
+          participantIds.length === 2;
+
+        const hasTwoDifferentParticipants =
+          new Set(
+            participantIds
+          ).size === 2;
+
+        const includesCurrentUser =
+          participantIds.includes(
+            currentUserId
           );
 
+        if (
+          !hasExactlyTwoParticipants ||
+          !hasTwoDifferentParticipants ||
+          !includesCurrentUser
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Invalid direct conversation.",
+          });
+        }
+      }
+
+      /*
+      |--------------------------------------------------------------------------
+      | DIRECT MESSAGE
+      |--------------------------------------------------------------------------
+      */
+
+      if (!conversation.isGroup) {
+        const otherParticipant =
+          participants.find(
+            (participant) =>
+              participant.toString() !==
+              currentUserId
+          );
+
+        /*
+         * No other participant means
+         * this would be a self conversation.
+         */
         if (!otherParticipant) {
           return res.status(400).json({
             success: false,
             message:
-              "Unable to determine message recipient.",
+              "You cannot send messages to yourself.",
           });
         }
 
         /*
-          Block safety check.
-        */
+         * Final explicit self-chat protection.
+         */
+        if (
+          otherParticipant.toString() ===
+          currentUserId
+        ) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "You cannot send messages to yourself.",
+          });
+        }
+
+        /*
+         * Check whether either user has blocked
+         * the other.
+         */
         const blocked =
           await Block.findOne({
             $or: [
@@ -560,35 +619,52 @@ router.post(
         }
 
         /*
-          Create message with a receipt for
-          the other participant.
-        */
+         * Create message.
+         */
         const message =
           await Message.create({
             conversation:
               conversationId,
             sender:
               req.user._id,
-            text:
-              cleanText,
+            text: cleanText,
             receipts:
               buildReceipts(
-                conversation.participants,
+                participants,
                 req.user._id
               ),
           });
 
+        /*
+         * Update conversation.
+         */
         conversation.lastMessage =
           message._id;
 
+        conversation.lastMessageAt =
+          message.createdAt;
+
+        conversation.lastMessagePreview =
+          cleanText;
+
         /*
-          Ensure participant state exists for
-          this conversation.
-        */
+         * Ensure participant states exist.
+         */
         conversation.ensureParticipantStates();
+
+        /*
+         * Increment unread count for everyone
+         * except sender.
+         */
+        conversation.incrementUnreadForOthers(
+          req.user._id
+        );
 
         await conversation.save();
 
+        /*
+         * Populate sender information for frontend.
+         */
         const populatedMessage =
           await Message.findById(
             message._id
@@ -598,10 +674,9 @@ router.post(
           );
 
         /*
-          Real-time message.
-        */
-        const io =
-          req.app.get("io");
+         * Socket.IO realtime update.
+         */
+        const io = req.app.get("io");
 
         if (io) {
           io.to(
@@ -612,15 +687,11 @@ router.post(
           );
 
           /*
-            Update conversation lists for every
-            participant.
-
-            This allows the sidebar to move the
-            conversation to the top immediately.
-          */
+           * Update conversation list for
+           * every participant.
+           */
           for (
-            const participant
-            of conversation.participants
+            const participant of participants
           ) {
             io.to(
               `user:${participant.toString()}`
@@ -639,28 +710,25 @@ router.post(
         }
 
         /*
-          Notification + push.
-        */
+         * In-app notification + push.
+         *
+         * Notification failure will NOT
+         * break message sending.
+         */
         await notifyMessageRecipient({
-          req,
           recipient:
             otherParticipant,
           actor:
             req.user._id,
-          type:
-            "message",
-          title:
-            `@${
-              req.user.username ||
-              "Someone"
-            }`,
-          body:
-            cleanText,
-          url:
-            `/messages/${conversationId}`,
+          type: "message",
+          title: `@${
+            req.user.username ||
+            "Someone"
+          }`,
+          body: cleanText,
+          url: `/messages/${conversationId}`,
           conversationId,
-          tag:
-            `message-${conversationId}`,
+          tag: `message-${conversationId}`,
         });
 
         return res.status(201).json({
@@ -671,33 +739,65 @@ router.post(
       }
 
       /*
-      ==========================================================
-      GROUP MESSAGE
-      ==========================================================
+      |--------------------------------------------------------------------------
+      | GROUP MESSAGE
+      |--------------------------------------------------------------------------
       */
 
+      if (participants.length === 0) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "This group has no participants.",
+        });
+      }
+
+      /*
+       * Create group message.
+       */
       const message =
         await Message.create({
           conversation:
             conversationId,
           sender:
             req.user._id,
-          text:
-            cleanText,
+          text: cleanText,
           receipts:
             buildReceipts(
-              conversation.participants,
+              participants,
               req.user._id
             ),
         });
 
+      /*
+       * Update conversation metadata.
+       */
       conversation.lastMessage =
         message._id;
 
+      conversation.lastMessageAt =
+        message.createdAt;
+
+      conversation.lastMessagePreview =
+        cleanText;
+
+      /*
+       * Ensure participant states.
+       */
       conversation.ensureParticipantStates();
+
+      /*
+       * Increment unread counts.
+       */
+      conversation.incrementUnreadForOthers(
+        req.user._id
+      );
 
       await conversation.save();
 
+      /*
+       * Populate sender.
+       */
       const populatedMessage =
         await Message.findById(
           message._id
@@ -706,8 +806,10 @@ router.post(
           "username avatar"
         );
 
-      const io =
-        req.app.get("io");
+      /*
+       * Socket.IO realtime update.
+       */
+      const io = req.app.get("io");
 
       if (io) {
         io.to(
@@ -718,11 +820,10 @@ router.post(
         );
 
         /*
-          Synchronize conversation lists.
-        */
+         * Synchronize conversation lists.
+         */
         for (
-          const participant
-          of conversation.participants
+          const participant of participants
         ) {
           io.to(
             `user:${participant.toString()}`
@@ -741,36 +842,32 @@ router.post(
       }
 
       /*
-        Notify all group members except sender.
-      */
+       * Notify every group member except sender.
+       */
       const recipients =
-        conversation.participants.filter(
+        participants.filter(
           (participant) =>
             participant.toString() !==
-            req.user._id.toString()
+            currentUserId
         );
 
       for (
-        const recipient
-        of recipients
+        const recipient of recipients
       ) {
         await notifyMessageRecipient({
-          req,
           recipient,
           actor:
             req.user._id,
           type:
             "group-message",
           title:
-            conversation.name ||
+            conversation.groupName ||
             "CoChat group",
-          body:
-            `@${
-              req.user.username ||
-              "Someone"
-            }: ${cleanText}`,
-          url:
-            `/groups/${conversationId}`,
+          body: `@${
+            req.user.username ||
+            "Someone"
+          }: ${cleanText}`,
+          url: `/groups/${conversationId}`,
           conversationId,
           tag:
             `group-message-${conversationId}`,

@@ -2699,16 +2699,28 @@ h1 span {
 }
 @media (max-width: 700px) {
   .app-navbar-inner {
-    width: min(100% - 20px, 1180px);
+    width: min(100% - 12px, 1180px);
+    gap: 4px;
+  }
+
+  .app-navbar-logo {
+    flex-shrink: 0;
+    font-size: 17px;
   }
 
   .app-navbar-links {
-    gap: 2px;
+    min-width: 0;
+    flex: 1;
+    justify-content: center;
+    gap: 1px;
   }
 
   .app-nav-link {
-    padding: 8px;
+    width: 30px;
+    height: 34px;
+    padding: 6px;
     font-size: 0;
+    justify-content: center;
   }
 
   .app-nav-link svg {
@@ -2716,19 +2728,29 @@ h1 span {
     height: 18px;
   }
 
-  .app-navbar-logout {
-    width: 36px;
-    height: 36px;
+  /*
+   * IMPORTANT:
+   * The Requests icon is inside a span wrapper.
+   * Keep that wrapper visible on mobile.
+   */
+  .app-nav-link-icon-wrapper {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
   }
 
-    .app-request-badge {
-    top: -8px;
-    right: -9px;
+  .app-navbar-actions {
+    flex-shrink: 0;
+    gap: 3px;
+  }
 
-    min-width: 16px;
-    height: 16px;
-
-    font-size: 8px;
+  .app-navbar-notification,
+  .app-navbar-profile,
+  .app-navbar-logout {
+    width: 32px;
+    height: 32px;
   }
 }
 /* ========================================
@@ -6185,19 +6207,41 @@ h1 span {
   .messages-page {
     height: calc(100vh - 105px);
     min-height: 550px;
-
     display: block;
   }
 
-  .messages-sidebar {
+  /*
+   * /messages
+   *
+   * Show the conversation list.
+   */
+  .messages-page:not(.messages-page-chat-open) .messages-sidebar {
+    display: flex;
+    width: 100%;
+    height: 100%;
+    border-radius: 22px;
+  }
+
+  .messages-page:not(.messages-page-chat-open) .messages-chat {
     display: none;
   }
 
-  .messages-chat {
-    height: 100%;
+  /*
+   * /messages/:conversationId
+   *
+   * Hide the conversation list and show the selected chat.
+   */
+  .messages-page-chat-open .messages-sidebar {
+    display: none;
+  }
 
+  .messages-page-chat-open .messages-chat {
+    display: flex;
+    width: 100%;
+    height: 100%;
     border-radius: 22px;
   }
+
 
   .chat-mobile-back {
     width: 36px;
@@ -8996,11 +9040,18 @@ h1 span {
     display: none;
   }
 
+  /*
+   * Do NOT hide the icon wrapper.
+   * Requests uses this wrapper for MailPlus + badge.
+   */
+  .app-navbar-links .app-nav-link-icon-wrapper {
+    display: inline-flex !important;
+  }
+
   .app-navbar-actions {
-    gap: 6px;
+    gap: 3px;
   }
 }
-
 @keyframes cochat-float-one {
   0%,
   100% {
@@ -11476,5 +11527,23 @@ h1 span {
   .landing-google-login,
   .signup-btn {
     width: min(265px, 90vw);
+  }
+}
+
+@media (max-width: 720px) {
+  .messages-page:not(.messages-page-chat-open) .messages-sidebar {
+    display: flex;
+  }
+
+  .messages-page:not(.messages-page-chat-open) .messages-chat {
+    display: none;
+  }
+
+  .messages-page-chat-open .messages-sidebar {
+    display: none;
+  }
+
+  .messages-page-chat-open .messages-chat {
+    display: flex;
   }
 }

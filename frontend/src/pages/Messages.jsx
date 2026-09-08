@@ -1,4 +1,3 @@
-
 import {
   useCallback,
   useEffect,
@@ -29,7 +28,6 @@ import {
 } from "lucide-react";
 
 import {
-  Link,
   useNavigate,
   useParams,
 } from "react-router-dom";
@@ -94,13 +92,13 @@ function formatTime(date) {
     return "";
   }
 
-  const parsedDate = new Date(date);
+  const parsed = new Date(date);
 
-  if (Number.isNaN(parsedDate.getTime())) {
+  if (Number.isNaN(parsed.getTime())) {
     return "";
   }
 
-  return parsedDate.toLocaleTimeString([], {
+  return parsed.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
   });
@@ -112,65 +110,176 @@ function formatConversationTime(date) {
     return "";
   }
 
-  const parsedDate = new Date(date);
+  const parsed = new Date(date);
 
-  if (Number.isNaN(parsedDate.getTime())) {
+  if (Number.isNaN(parsed.getTime())) {
     return "";
   }
 
   const now = new Date();
 
   if (
-    parsedDate.toDateString() ===
+    parsed.toDateString() ===
     now.toDateString()
   ) {
-    return parsedDate.toLocaleTimeString([], {
+    return parsed.toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit",
     });
   }
 
   const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
+
+  yesterday.setDate(
+    yesterday.getDate() - 1
+  );
 
   if (
-    parsedDate.toDateString() ===
+    parsed.toDateString() ===
     yesterday.toDateString()
   ) {
     return "Yesterday";
   }
 
-  return parsedDate.toLocaleDateString([], {
+  return parsed.toLocaleDateString([], {
     day: "numeric",
     month: "short",
   });
 }
 
 
+/*
+ * Return the participant who is NOT the current user.
+ *
+ * IMPORTANT:
+ * We deliberately do NOT fall back to participants[0].
+ *
+ * The old fallback could make a malformed
+ * [currentUser, currentUser] conversation appear
+ * as a legitimate conversation with yourself.
+ */
 function getOtherParticipant(
   conversation,
   currentUser
 ) {
-  if (!conversation?.participants?.length) {
+  if (
+    !conversation ||
+    !Array.isArray(
+      conversation.participants
+    )
+  ) {
     return null;
   }
 
-  const currentId = getId(currentUser);
+  const currentId =
+    getId(currentUser);
+
+  if (!currentId) {
+    return null;
+  }
 
   return (
     conversation.participants.find(
       (participant) =>
-        getId(participant) !== currentId
-    ) ||
-    conversation.participants[0]
+        getId(participant) !==
+        currentId
+    ) || null
   );
 }
 
 
-function mergeMessages(existing, incoming) {
+function isValidConversationForUser(
+  conversation,
+  currentUser
+) {
+  if (!conversation) {
+    return false;
+  }
+
+  /*
+   * Your current backend Conversation model uses
+   * `isGroup`, not `type`.
+   *
+   * Messages page currently supports direct chats.
+   */
+  if (conversation.isGroup === true) {
+    return false;
+  }
+
+  const participants =
+    conversation.participants;
+
+  if (
+    !Array.isArray(participants) ||
+    participants.length !== 2
+  ) {
+    return false;
+  }
+
+  const ids = participants
+    .map(getId)
+    .filter(Boolean);
+
+  if (ids.length !== 2) {
+    return false;
+  }
+
+  /*
+   * Prevent:
+   *
+   * [currentUser, currentUser]
+   *
+   * from ever appearing as a valid conversation.
+   */
+  if (new Set(ids).size !== 2) {
+    return false;
+  }
+
+  const currentId =
+    getId(currentUser);
+
+  if (!currentId) {
+    return false;
+  }
+
+  /*
+   * Current user must actually belong
+   * to this conversation.
+   */
+  if (!ids.includes(currentId)) {
+    return false;
+  }
+
+  /*
+   * Find the other participant.
+   */
+  const otherId =
+    ids.find(
+      (id) => id !== currentId
+    );
+
+  /*
+   * Final self-chat protection.
+   */
+  if (
+    !otherId ||
+    otherId === currentId
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+function mergeMessages(
+  existing,
+  incoming
+) {
   const map = new Map();
 
-  for (const message of existing || []) {
+  for (
+    const message of existing || []
+  ) {
     const id = getId(message);
 
     if (id) {
@@ -178,34 +287,51 @@ function mergeMessages(existing, incoming) {
     }
   }
 
-  for (const message of incoming || []) {
+  for (
+    const message of incoming || []
+  ) {
     const id = getId(message);
 
-    if (id) {
-      map.set(id, {
-        ...map.get(id),
-        ...message,
-      });
+    if (!id) {
+      continue;
     }
+
+    map.set(id, {
+      ...map.get(id),
+      ...message,
+    });
   }
 
-  return Array.from(map.values()).sort(
+  return Array.from(
+    map.values()
+  ).sort(
     (a, b) =>
-      new Date(a.createdAt || 0).getTime() -
-      new Date(b.createdAt || 0).getTime()
+      new Date(
+        a.createdAt || 0
+      ).getTime() -
+      new Date(
+        b.createdAt || 0
+      ).getTime()
   );
 }
 
 
-function getReceiptForUser(message, userId) {
-  if (!message?.receipts?.length || !userId) {
+function getReceiptForUser(
+  message,
+  userId
+) {
+  if (
+    !message?.receipts ||
+    !userId
+  ) {
     return null;
   }
 
   return (
     message.receipts.find(
       (receipt) =>
-        getId(receipt.user) === userId
+        getId(receipt.user) ===
+        userId
     ) || null
   );
 }
@@ -215,11 +341,8 @@ function getOwnMessageStatus(
   message,
   currentUserId
 ) {
-  if (!message || !currentUserId) {
-    return "sent";
-  }
-
-  const receipts = message.receipts || [];
+  const receipts =
+    message?.receipts || [];
 
   const otherReceipts =
     receipts.filter(
@@ -238,7 +361,8 @@ function getOwnMessageStatus(
 
   if (
     otherReceipts.some(
-      (receipt) => receipt.deliveredAt
+      (receipt) =>
+        receipt.deliveredAt
     )
   ) {
     return "delivered";
@@ -260,7 +384,10 @@ function Avatar({
     return (
       <img
         src={user.avatar}
-        alt={user.username || "User"}
+        alt={
+          user.username ||
+          "User"
+        }
         className={`chat-avatar chat-avatar-${size}`}
       />
     );
@@ -292,10 +419,11 @@ function MessageStatus({
   message,
   currentUserId,
 }) {
-  const status = getOwnMessageStatus(
-    message,
-    currentUserId
-  );
+  const status =
+    getOwnMessageStatus(
+      message,
+      currentUserId
+    );
 
   if (status === "read") {
     return (
@@ -307,7 +435,9 @@ function MessageStatus({
     );
   }
 
-  if (status === "delivered") {
+  if (
+    status === "delivered"
+  ) {
     return (
       <CheckCheck
         size={13}
@@ -328,95 +458,146 @@ function MessageStatus({
 
 
 /* =========================================================
-   MESSAGES PAGE
+   PAGE
 ========================================================= */
 
 function Messages() {
-  const { conversationId } = useParams();
-  const navigate = useNavigate();
+  const {
+    conversationId,
+  } = useParams();
+
+  const navigate =
+    useNavigate();
 
 
   /* =======================================================
      STATE
   ======================================================= */
 
-  const [currentUser, setCurrentUser] =
-    useState(null);
+  const [
+    currentUser,
+    setCurrentUser,
+  ] = useState(null);
 
-  const [conversations, setConversations] =
-    useState([]);
+  const [
+    conversations,
+    setConversations,
+  ] = useState([]);
 
-  const [conversation, setConversation] =
-    useState(null);
+  const [
+    conversation,
+    setConversation,
+  ] = useState(null);
 
-  const [messages, setMessages] =
-    useState([]);
+  const [
+    messages,
+    setMessages,
+  ] = useState([]);
 
-  const [text, setText] =
-    useState("");
+  const [
+    text,
+    setText,
+  ] = useState("");
 
-  const [loading, setLoading] =
-    useState(true);
+  const [
+    loading,
+    setLoading,
+  ] = useState(true);
 
-  const [loadingOlder, setLoadingOlder] =
-    useState(false);
+  const [
+    loadingOlder,
+    setLoadingOlder,
+  ] = useState(false);
 
-  const [hasMoreMessages, setHasMoreMessages] =
-    useState(false);
+  const [
+    hasMoreMessages,
+    setHasMoreMessages,
+  ] = useState(false);
 
-  const [nextCursor, setNextCursor] =
-    useState(null);
+  const [
+    nextCursor,
+    setNextCursor,
+  ] = useState(null);
 
-  const [sending, setSending] =
-    useState(false);
+  const [
+    sending,
+    setSending,
+  ] = useState(false);
 
-  const [error, setError] =
-    useState("");
+  const [
+    error,
+    setError,
+  ] = useState("");
 
-  const [search, setSearch] =
-    useState("");
+  const [
+    search,
+    setSearch,
+  ] = useState("");
 
-  const [showChatMenu, setShowChatMenu] =
-    useState(false);
+  const [
+    searchMessages,
+    setSearchMessages,
+  ] = useState(false);
 
-  const [muted, setMuted] =
-    useState(false);
+  const [
+    messageSearch,
+    setMessageSearch,
+  ] = useState("");
 
-  const [muteLoading, setMuteLoading] =
-    useState(false);
+  const [
+    typingUsers,
+    setTypingUsers,
+  ] = useState(new Set());
 
-  const [blocked, setBlocked] =
-    useState(false);
+  const [
+    muted,
+    setMuted,
+  ] = useState(false);
 
-  const [blockLoading, setBlockLoading] =
-    useState(false);
+  const [
+    muteLoading,
+    setMuteLoading,
+  ] = useState(false);
 
-  const [showBlockConfirm, setShowBlockConfirm] =
-    useState(false);
+  const [
+    blocked,
+    setBlocked,
+  ] = useState(false);
 
-  const [showReportModal, setShowReportModal] =
-    useState(false);
+  const [
+    blockLoading,
+    setBlockLoading,
+  ] = useState(false);
 
-  const [reportReason, setReportReason] =
-    useState("");
+  const [
+    showBlockConfirm,
+    setShowBlockConfirm,
+  ] = useState(false);
 
-  const [reportLoading, setReportLoading] =
-    useState(false);
+  const [
+    showReportModal,
+    setShowReportModal,
+  ] = useState(false);
 
-  const [searchMessages, setSearchMessages] =
-    useState(false);
+  const [
+    reportReason,
+    setReportReason,
+  ] = useState("");
 
-  const [messageSearch, setMessageSearch] =
-    useState("");
+  const [
+    reportLoading,
+    setReportLoading,
+  ] = useState(false);
 
-  const [typingUsers, setTypingUsers] =
-    useState(new Set());
+  const [
+    showChatMenu,
+    setShowChatMenu,
+  ] = useState(false);
 
-  const [readState, setReadState] =
-    useState(null);
-
-  const [totalUnread, setTotalUnread] =
-    useState(0);
+  const [
+    readState,
+    setReadState,
+  ] = useState(null);
 
 
   /* =======================================================
@@ -441,17 +622,11 @@ function Messages() {
   const initialScrollRef =
     useRef(true);
 
-  const currentConversationRef =
-    useRef(conversationId);
-
   const currentUserRef =
-    useRef(currentUser);
+    useRef(null);
 
-
-  useEffect(() => {
-    currentConversationRef.current =
-      conversationId;
-  }, [conversationId]);
+  const currentConversationRef =
+    useRef(null);
 
 
   useEffect(() => {
@@ -460,35 +635,59 @@ function Messages() {
   }, [currentUser]);
 
 
+  useEffect(() => {
+    currentConversationRef.current =
+      conversationId;
+  }, [conversationId]);
+
+
   /* =======================================================
-     LOAD USER + CONVERSATIONS
+     LOAD CONVERSATIONS
   ======================================================= */
 
   const loadConversationList =
-    useCallback(async () => {
-      try {
-        const data =
-          await getConversations();
+    useCallback(
+      async () => {
+        try {
+          const data =
+            await getConversations();
 
-        setConversations(
-          data?.conversations || []
-        );
+          const raw =
+            data?.conversations ||
+            [];
 
-        setTotalUnread(
-          Number(data?.totalUnread || 0)
-        );
-      } catch (loadError) {
-        console.error(
-          "Load conversations error:",
-          loadError
-        );
+          /*
+           * Frontend defensive filtering.
+           *
+           * Even if an old malformed self-chat exists
+           * in MongoDB, it will never be displayed.
+           */
+          const safe =
+  raw.filter(
+    (item) =>
+      isValidConversationForUser(
+        item,
+        currentUserRef.current
+      )
+  );
 
-        setError(
-          loadError.message ||
-            "Unable to load conversations."
-        );
-      }
-    }, []);
+          setConversations(
+            safe
+          );
+        } catch (loadError) {
+          console.error(
+            "Load conversations error:",
+            loadError
+          );
+
+          setError(
+            loadError.message ||
+              "Unable to load conversations."
+          );
+        }
+      },
+      []
+    );
 
 
   useEffect(() => {
@@ -510,28 +709,54 @@ function Messages() {
           }
 
           const user =
-            userData?.user || null;
+            userData?.user ||
+            null;
 
-          setCurrentUser(user);
-
-          setConversations(
-            conversationData?.conversations || []
+          setCurrentUser(
+            user
           );
 
-          setTotalUnread(
-            Number(
-              conversationData?.totalUnread || 0
-            )
+          currentUserRef.current =
+            user;
+
+          const raw =
+            conversationData?.conversations ||
+            [];
+
+          /*
+           * This is the first line of defense against
+           * the self-chat appearing on mobile or desktop.
+           */
+          const safe =
+            raw.filter(
+              (item) =>
+                isValidConversationForUser(
+                  item,
+                  user
+                )
+            );
+
+          setConversations(
+            safe
           );
         } catch (loadError) {
           if (!mounted) {
             return;
           }
 
+          console.error(
+            "Initial messages load error:",
+            loadError
+          );
+
           setError(
             loadError.message ||
               "Unable to load conversations."
           );
+        } finally {
+          if (mounted) {
+            setLoading(false);
+          }
         }
       };
 
@@ -544,183 +769,214 @@ function Messages() {
 
 
   /* =======================================================
-     LOAD SELECTED CONVERSATION
+     LOAD SELECTED CHAT
   ======================================================= */
 
-useEffect(() => {
-  let mounted = true;
+  useEffect(() => {
+    let mounted = true;
 
-  const loadSelectedConversation = async () => {
-    if (!conversationId) {
-      setConversation(null);
-      setMessages([]);
-      setReadState(null);
-      setHasMoreMessages(false);
-      setNextCursor(null);
-      setError("");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      setLoading(true);
-      setError("");
-      initialScrollRef.current = true;
-
-      /*
-       * Load the actual conversation first.
-       *
-       * This is the critical request. If it succeeds,
-       * the chat UI should be allowed to render.
-       */
-      const conversationData =
-        await getConversation(conversationId);
-
-      if (!mounted) {
-        return;
-      }
-
-      const loadedConversation =
-        conversationData?.conversation || null;
-
-      if (!loadedConversation) {
-        throw new Error(
-          "Conversation could not be loaded."
-        );
-      }
-
-      setConversation(loadedConversation);
-
-      /*
-       * Messages are required for the chat history,
-       * but message-state is optional. Do not let a
-       * receipt/read-state failure hide the entire chat.
-       */
-      const [messageResult, stateResult] =
-        await Promise.allSettled([
-          getMessages(conversationId, {
-            limit: 30,
-          }),
-
-          getMessageState(conversationId),
-        ]);
-
-      if (!mounted) {
-        return;
-      }
-
-      /*
-       * MESSAGE HISTORY
-       */
-      if (
-        messageResult.status === "fulfilled"
-      ) {
-        const messageData =
-          messageResult.value;
-
-        setMessages(
-          messageData?.messages || []
-        );
-
-        setHasMoreMessages(
-          Boolean(
-            messageData?.pagination?.hasMore
-          )
-        );
-
-        setNextCursor(
-          messageData?.pagination?.nextCursor ||
-            null
-        );
-      } else {
-        console.error(
-          "Load messages error:",
-          messageResult.reason
-        );
-
-        setMessages([]);
-        setHasMoreMessages(false);
-        setNextCursor(null);
-
-        setError(
-          messageResult.reason?.message ||
-            "Unable to load messages."
-        );
-      }
-
-      /*
-       * MESSAGE STATE
-       *
-       * Backend returns:
-       *   { readState, receipts }
-       *
-       * Older frontend code incorrectly expected:
-       *   { state }
-       */
-      if (
-        stateResult.status === "fulfilled"
-      ) {
-        const stateData =
-          stateResult.value;
-
-        setReadState(
-          stateData?.readState || null
-        );
-      } else {
+    const loadSelectedConversation =
+      async () => {
         /*
-         * Read state is optional. The chat itself
-         * must continue working when this request
-         * fails.
+         * /messages is intentionally a conversation-list
+         * page.
+         *
+         * This is the key mobile UX change.
          */
-        console.warn(
-          "Message state unavailable:",
-          stateResult.reason
-        );
+        if (!conversationId) {
+          setConversation(null);
+          setMessages([]);
+          setReadState(null);
+          setError("");
+          setHasMoreMessages(false);
+          setNextCursor(null);
+          setTypingUsers(
+            new Set()
+          );
+          setLoading(false);
+          return;
+        }
 
-        setReadState(null);
-      }
-    } catch (loadError) {
-      if (!mounted) {
-        return;
-      }
+        try {
+          setLoading(true);
+          setError("");
+          initialScrollRef.current =
+            true;
 
-      console.error(
-        "Load selected conversation error:",
-        loadError
-      );
+          const data =
+            await getConversation(
+              conversationId
+            );
 
-      setConversation(null);
-      setMessages([]);
-      setReadState(null);
-      setHasMoreMessages(false);
-      setNextCursor(null);
+          if (!mounted) {
+            return;
+          }
 
-      setError(
-        loadError.message ||
-          "Unable to load conversation."
-      );
-    } finally {
-      if (mounted) {
-        setLoading(false);
-      }
-    }
-  };
+          const loaded =
+            data?.conversation ||
+            null;
 
-  loadSelectedConversation();
+          /*
+           * Never allow a malformed/self conversation
+           * to become the active chat.
+           */
+          if (
+            !isValidConversationForUser(
+              loaded,
+              currentUserRef.current
+            )
+          ) {
+            setConversation(null);
+            setMessages([]);
+            setError(
+              "This conversation is no longer available."
+            );
+            setLoading(false);
 
-  return () => {
-    mounted = false;
-  };
-}, [conversationId]);
+            /*
+             * Return to the conversation list.
+             */
+            navigate(
+              "/messages",
+              {
+                replace: true,
+              }
+            );
+
+            return;
+          }
+
+          setConversation(
+            loaded
+          );
+
+          const [
+            messageResult,
+            stateResult,
+          ] = await Promise.allSettled([
+            getMessages(
+              conversationId,
+              {
+                limit: 30,
+              }
+            ),
+            getMessageState(
+              conversationId
+            ),
+          ]);
+
+          if (!mounted) {
+            return;
+          }
+
+          if (
+            messageResult.status ===
+            "fulfilled"
+          ) {
+            const result =
+              messageResult.value;
+
+            setMessages(
+              result?.messages ||
+                []
+            );
+
+            setHasMoreMessages(
+              Boolean(
+                result
+                  ?.pagination
+                  ?.hasMore
+              )
+            );
+
+            setNextCursor(
+              result
+                ?.pagination
+                ?.nextCursor ||
+                null
+            );
+          } else {
+            console.error(
+              "Load messages error:",
+              messageResult.reason
+            );
+
+            setMessages([]);
+            setHasMoreMessages(
+              false
+            );
+            setNextCursor(null);
+
+            setError(
+              messageResult.reason
+                ?.message ||
+                "Unable to load messages."
+            );
+          }
+
+          if (
+            stateResult.status ===
+            "fulfilled"
+          ) {
+            setReadState(
+              stateResult.value
+                ?.readState ||
+                stateResult.value
+                  ?.state ||
+                null
+            );
+          } else {
+            setReadState(null);
+          }
+        } catch (loadError) {
+          if (!mounted) {
+            return;
+          }
+
+          console.error(
+            "Load selected conversation error:",
+            loadError
+          );
+
+          setConversation(null);
+          setMessages([]);
+          setReadState(null);
+          setHasMoreMessages(
+            false
+          );
+          setNextCursor(null);
+
+          setError(
+            loadError.message ||
+              "Unable to load conversation."
+          );
+        } finally {
+          if (mounted) {
+            setLoading(false);
+          }
+        }
+      };
+
+    loadSelectedConversation();
+
+    return () => {
+      mounted = false;
+    };
+  }, [
+    conversationId,
+    navigate,
+  ]);
+
 
   /* =======================================================
-     LOAD MUTE + BLOCK STATE
+     LOAD CHAT SETTINGS
   ======================================================= */
 
   useEffect(() => {
     if (
       !conversationId ||
-      !conversation
+      !conversation ||
+      !currentUser
     ) {
       return;
     }
@@ -730,16 +986,16 @@ useEffect(() => {
     const loadSettings =
       async () => {
         try {
-          const otherParticipant =
+          const other =
             getOtherParticipant(
               conversation,
               currentUser
             );
 
-          const otherUserId =
-            getId(otherParticipant);
+          const otherId =
+            getId(other);
 
-          if (!otherUserId) {
+          if (!otherId) {
             return;
           }
 
@@ -751,7 +1007,7 @@ useEffect(() => {
               conversationId
             ),
             getBlockStatus(
-              otherUserId
+              otherId
             ),
           ]);
 
@@ -762,7 +1018,9 @@ useEffect(() => {
           setMuted(
             Boolean(
               settingsData?.muted ??
-              settingsData?.settings?.muted
+              settingsData
+                ?.settings
+                ?.muted
             )
           );
 
@@ -772,10 +1030,10 @@ useEffect(() => {
               blockData?.isBlocked
             )
           );
-        } catch (loadError) {
-          console.error(
-            "Load chat settings error:",
-            loadError
+        } catch (settingsError) {
+          console.debug(
+            "Chat settings unavailable:",
+            settingsError
           );
         }
       };
@@ -793,245 +1051,24 @@ useEffect(() => {
 
 
   /* =======================================================
-     MARK INCOMING MESSAGES DELIVERED
+     OTHER USER
   ======================================================= */
 
-  useEffect(() => {
-    if (
-      !conversationId ||
-      !currentUser
-    ) {
-      return;
-    }
+  const otherUser =
+    useMemo(
+      () =>
+        getOtherParticipant(
+          conversation,
+          currentUser
+        ),
+      [
+        conversation,
+        currentUser,
+      ]
+    );
 
-    const currentUserId =
-      getId(currentUser);
-
-    const incomingMessages =
-      messages.filter(
-        (message) =>
-          getId(message.sender) !==
-            currentUserId &&
-          !getReceiptForUser(
-            message,
-            currentUserId
-          )?.deliveredAt
-      );
-
-    if (!incomingMessages.length) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const markDelivered =
-      async () => {
-        for (const message of incomingMessages) {
-          if (cancelled) {
-            return;
-          }
-
-          const messageId =
-            getId(message);
-
-          if (!messageId) {
-            continue;
-          }
-
-          try {
-            await markMessageDelivered(
-              conversationId,
-              messageId
-            );
-
-            if (cancelled) {
-              return;
-            }
-
-            setMessages((previous) =>
-              previous.map((item) => {
-                if (
-                  getId(item) !==
-                  messageId
-                ) {
-                  return item;
-                }
-
-                const receipts = [
-                  ...(item.receipts || []),
-                ];
-
-                const existingIndex =
-                  receipts.findIndex(
-                    (receipt) =>
-                      getId(
-                        receipt.user
-                      ) === currentUserId
-                  );
-
-                if (
-                  existingIndex >= 0
-                ) {
-                  receipts[
-                    existingIndex
-                  ] = {
-                    ...receipts[
-                      existingIndex
-                    ],
-                    deliveredAt:
-                      new Date().toISOString(),
-                  };
-                } else {
-                  receipts.push({
-                    user: currentUserId,
-                    deliveredAt:
-                      new Date().toISOString(),
-                    readAt: null,
-                  });
-                }
-
-                return {
-                  ...item,
-                  receipts,
-                };
-              })
-            );
-          } catch (deliveryError) {
-            console.debug(
-              "Delivery state update skipped:",
-              deliveryError
-            );
-          }
-        }
-      };
-
-    markDelivered();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    conversationId,
-    currentUser,
-    messages,
-  ]);
-
-
-  /* =======================================================
-     MARK CONVERSATION READ
-  ======================================================= */
-
-  const markVisibleMessagesRead =
-    useCallback(async () => {
-      if (
-        !conversationId ||
-        !currentUser ||
-        !messages.length
-      ) {
-        return;
-      }
-
-      const currentUserId =
-        getId(currentUser);
-
-      const incoming =
-        messages.filter(
-          (message) =>
-            getId(message.sender) !==
-            currentUserId
-        );
-
-      if (!incoming.length) {
-        return;
-      }
-
-      const lastMessage =
-        incoming[incoming.length - 1];
-
-      const lastMessageId =
-        getId(lastMessage);
-
-      if (!lastMessageId) {
-        return;
-      }
-
-      try {
-        const result =
-          await markConversationRead(
-            conversationId,
-            lastMessageId
-          );
-
-        if (result?.state) {
-          setReadState(
-            result.state
-          );
-        }
-
-        setConversations((previous) =>
-          previous.map((item) =>
-            getId(item) ===
-            conversationId
-              ? {
-                  ...item,
-                  unreadCount: 0,
-                }
-              : item
-          )
-        );
-
-        setTotalUnread((value) =>
-          Math.max(
-            0,
-            value -
-              Number(
-                conversations.find(
-                  (item) =>
-                    getId(item) ===
-                    conversationId
-                )?.unreadCount || 0
-              )
-          )
-        );
-      } catch (readError) {
-        console.debug(
-          "Read state update skipped:",
-          readError
-        );
-      }
-    }, [
-      conversationId,
-      currentUser,
-      messages,
-      conversations,
-    ]);
-
-
-  useEffect(() => {
-    if (
-      loading ||
-      blocked ||
-      !conversationId ||
-      !messages.length
-    ) {
-      return;
-    }
-
-    const timer =
-      setTimeout(() => {
-        markVisibleMessagesRead();
-      }, 250);
-
-    return () => {
-      clearTimeout(timer);
-    };
-  }, [
-    loading,
-    blocked,
-    conversationId,
-    messages,
-    markVisibleMessagesRead,
-  ]);
+  const otherUserId =
+    getId(otherUser);
 
 
   /* =======================================================
@@ -1044,7 +1081,10 @@ useEffect(() => {
     }
 
     const currentUserId =
-      getId(currentUser);
+      getId(
+        currentUserRef.current
+      );
+
 
     const handleNewMessage =
       (message) => {
@@ -1053,7 +1093,9 @@ useEffect(() => {
         }
 
         const incomingConversationId =
-          getId(message.conversation);
+          getId(
+            message.conversation
+          );
 
         if (
           incomingConversationId &&
@@ -1063,84 +1105,64 @@ useEffect(() => {
           return;
         }
 
+        setMessages(
+          (previous) =>
+            mergeMessages(
+              previous,
+              [message]
+            )
+        );
+
+        /*
+         * Keep the conversation at the top.
+         */
+        setConversations(
+          (previous) => {
+            const existing =
+              previous.find(
+                (item) =>
+                  getId(item) ===
+                  conversationId
+              );
+
+            if (!existing) {
+              /*
+               * Do not fabricate a conversation
+               * object from a socket message.
+               *
+               * REST remains authoritative.
+               */
+              loadConversationList();
+
+              return previous;
+            }
+
+            return [
+              {
+                ...existing,
+                lastMessage:
+                  message,
+                updatedAt:
+                  message.createdAt ||
+                  new Date()
+                    .toISOString(),
+              },
+              ...previous.filter(
+                (item) =>
+                  getId(item) !==
+                  conversationId
+              ),
+            ];
+          }
+        );
+
         const senderId =
           getId(message.sender);
 
-        const mine =
-          senderId === currentUserId;
-
-        setMessages((previous) =>
-          mergeMessages(
-            previous,
-            [message]
-          )
-        );
-
-        setConversations((previous) => {
-          const existing =
-            previous.find(
-              (item) =>
-                getId(item) ===
-                conversationId
-            );
-
-          if (!existing) {
-            return previous;
-          }
-
-          const unreadCount =
-            mine
-              ? Number(
-                  existing.unreadCount || 0
-                )
-              : 0;
-
-          return [
-            {
-              ...existing,
-              lastMessage: message,
-              updatedAt:
-                message.createdAt ||
-                new Date().toISOString(),
-              unreadCount,
-            },
-            ...previous.filter(
-              (item) =>
-                getId(item) !==
-                conversationId
-            ),
-          ];
-        });
-
-        if (!mine) {
-          if (
-            !muted &&
-            document.hidden &&
-            "Notification" in window &&
-            Notification.permission ===
-              "granted"
-          ) {
-            const senderName =
-              message.sender?.username ||
-              "New message";
-
-            new Notification(
-              `Message from ${senderName}`,
-              {
-                body:
-                  message.text ||
-                  "You received a new message.",
-                icon:
-                  message.sender?.avatar ||
-                  undefined,
-              }
-            );
-          }
-
-          /*
-           * We are currently inside the conversation,
-           * so immediately acknowledge the message.
-           */
+        if (
+          senderId !==
+          currentUserId
+        ) {
           markMessageDelivered(
             conversationId,
             getId(message)
@@ -1158,185 +1180,201 @@ useEffect(() => {
       (payload) => {
         const updatedId =
           getId(
+            payload?.conversationId ||
             payload?.conversation ||
-              payload
+            payload
           );
 
+        /*
+         * A conversation-list update may concern
+         * another chat, so simply refresh the list.
+         */
         if (
-          updatedId &&
-          updatedId !== conversationId
+          !updatedId ||
+          updatedId ===
+            conversationId
         ) {
-          return;
+          loadConversationList();
         }
-
-        loadConversationList().catch(
-          () => {}
-        );
       };
 
 
-    const handleMessageDelivered =
+    const handleDelivered =
       (payload) => {
         const messageId =
-          getId(payload?.message);
-
-        const userId =
-          getId(payload?.user);
-
-        if (!messageId || !userId) {
-          return;
-        }
-
-        setMessages((previous) =>
-          previous.map((message) => {
-            if (
-              getId(message) !==
-              messageId
-            ) {
-              return message;
-            }
-
-            const receipts = [
-              ...(message.receipts || []),
-            ];
-
-            const index =
-              receipts.findIndex(
-                (receipt) =>
-                  getId(receipt.user) ===
-                  userId
-              );
-
-            const receipt = {
-              user: userId,
-              deliveredAt:
-                payload.deliveredAt ||
-                new Date().toISOString(),
-              readAt:
-                index >= 0
-                  ? receipts[index]?.readAt ||
-                    null
-                  : null,
-            };
-
-            if (index >= 0) {
-              receipts[index] = {
-                ...receipts[index],
-                ...receipt,
-              };
-            } else {
-              receipts.push(receipt);
-            }
-
-            return {
-              ...message,
-              receipts,
-            };
-          })
-        );
-      };
-
-
-    const handleMessageRead =
-      (payload) => {
-        const messageId =
-          getId(payload?.message);
-
-        const userId =
-          getId(payload?.user);
-
-        if (!messageId || !userId) {
-          return;
-        }
-
-        setMessages((previous) =>
-          previous.map((message) => {
-            if (
-              getId(message) !==
-              messageId
-            ) {
-              return message;
-            }
-
-            const receipts = [
-              ...(message.receipts || []),
-            ];
-
-            const index =
-              receipts.findIndex(
-                (receipt) =>
-                  getId(receipt.user) ===
-                  userId
-              );
-
-            if (index >= 0) {
-              receipts[index] = {
-                ...receipts[index],
-                deliveredAt:
-                  receipts[index]
-                    .deliveredAt ||
-                  payload.readAt ||
-                  new Date().toISOString(),
-                readAt:
-                  payload.readAt ||
-                  new Date().toISOString(),
-              };
-            } else {
-              receipts.push({
-                user: userId,
-                deliveredAt:
-                  payload.readAt ||
-                  new Date().toISOString(),
-                readAt:
-                  payload.readAt ||
-                  new Date().toISOString(),
-              });
-            }
-
-            return {
-              ...message,
-              receipts,
-            };
-          })
-        );
-      };
-
-
-    const handleConversationRead =
-      (payload) => {
-        const readConversationId =
           getId(
-            payload?.conversation
+            payload?.message
+          );
+
+        const userId =
+          getId(
+            payload?.user
           );
 
         if (
-          readConversationId &&
-          readConversationId !==
-            conversationId
+          !messageId ||
+          !userId
         ) {
           return;
         }
 
-        setConversations((previous) =>
-          previous.map((item) =>
-            getId(item) ===
-            conversationId
-              ? {
-                  ...item,
-                  unreadCount: 0,
+        setMessages(
+          (previous) =>
+            previous.map(
+              (message) => {
+                if (
+                  getId(message) !==
+                  messageId
+                ) {
+                  return message;
                 }
-              : item
-          )
+
+                const receipts = [
+                  ...(message.receipts ||
+                    []),
+                ];
+
+                const index =
+                  receipts.findIndex(
+                    (receipt) =>
+                      getId(
+                        receipt.user
+                      ) ===
+                      userId
+                  );
+
+                const nextReceipt = {
+                  user: userId,
+                  deliveredAt:
+                    payload.deliveredAt ||
+                    new Date()
+                      .toISOString(),
+                  readAt:
+                    index >= 0
+                      ? receipts[index]
+                          ?.readAt ||
+                        null
+                      : null,
+                };
+
+                if (
+                  index >= 0
+                ) {
+                  receipts[index] = {
+                    ...receipts[index],
+                    ...nextReceipt,
+                  };
+                } else {
+                  receipts.push(
+                    nextReceipt
+                  );
+                }
+
+                return {
+                  ...message,
+                  receipts,
+                };
+              }
+            )
+        );
+      };
+
+
+    const handleRead =
+      (payload) => {
+        const messageId =
+          getId(
+            payload?.message
+          );
+
+        const userId =
+          getId(
+            payload?.user
+          );
+
+        if (
+          !messageId ||
+          !userId
+        ) {
+          return;
+        }
+
+        setMessages(
+          (previous) =>
+            previous.map(
+              (message) => {
+                if (
+                  getId(message) !==
+                  messageId
+                ) {
+                  return message;
+                }
+
+                const receipts = [
+                  ...(message.receipts ||
+                    []),
+                ];
+
+                const index =
+                  receipts.findIndex(
+                    (receipt) =>
+                      getId(
+                        receipt.user
+                      ) ===
+                      userId
+                  );
+
+                if (
+                  index >= 0
+                ) {
+                  receipts[index] = {
+                    ...receipts[index],
+                    deliveredAt:
+                      receipts[index]
+                        ?.deliveredAt ||
+                      payload.readAt ||
+                      new Date()
+                        .toISOString(),
+                    readAt:
+                      payload.readAt ||
+                      new Date()
+                        .toISOString(),
+                  };
+                } else {
+                  receipts.push({
+                    user: userId,
+                    deliveredAt:
+                      payload.readAt ||
+                      new Date()
+                        .toISOString(),
+                    readAt:
+                      payload.readAt ||
+                      new Date()
+                        .toISOString(),
+                  });
+                }
+
+                return {
+                  ...message,
+                  receipts,
+                };
+              }
+            )
         );
       };
 
 
     const handleTyping =
       (payload) => {
-        if (
+        const incomingId =
           getId(
             payload?.conversation
-          ) !== conversationId
+          );
+
+        if (
+          incomingId &&
+          incomingId !==
+            conversationId
         ) {
           return;
         }
@@ -1346,23 +1384,28 @@ useEffect(() => {
 
         if (
           !userId ||
-          userId === currentUserId
+          userId ===
+            currentUserId
         ) {
           return;
         }
 
-        setTypingUsers((previous) => {
-          const next =
-            new Set(previous);
+        setTypingUsers(
+          (previous) => {
+            const next =
+              new Set(previous);
 
-          if (payload.typing) {
-            next.add(userId);
-          } else {
-            next.delete(userId);
+            if (
+              payload.typing
+            ) {
+              next.add(userId);
+            } else {
+              next.delete(userId);
+            }
+
+            return next;
           }
-
-          return next;
-        });
+        );
       };
 
 
@@ -1373,10 +1416,6 @@ useEffect(() => {
           conversationId
         );
 
-        /*
-         * Socket.IO recovery is helpful, but REST remains
-         * authoritative after reconnects.
-         */
         try {
           const [
             messageData,
@@ -1394,28 +1433,35 @@ useEffect(() => {
           ]);
 
           setMessages(
-            messageData?.messages || []
+            messageData?.messages ||
+              []
           );
 
           setHasMoreMessages(
             Boolean(
-              messageData?.pagination?.hasMore
+              messageData
+                ?.pagination
+                ?.hasMore
             )
           );
 
           setNextCursor(
-            messageData?.pagination?.nextCursor ||
+            messageData
+              ?.pagination
+              ?.nextCursor ||
               null
           );
 
           setReadState(
-            stateData?.state || null
+            stateData?.readState ||
+            stateData?.state ||
+            null
           );
 
           await loadConversationList();
         } catch (syncError) {
           console.debug(
-            "Reconnect synchronization skipped:",
+            "Socket synchronization skipped:",
             syncError
           );
         }
@@ -1439,17 +1485,12 @@ useEffect(() => {
 
     socket.on(
       "message:delivered",
-      handleMessageDelivered
+      handleDelivered
     );
 
     socket.on(
       "message:read",
-      handleMessageRead
-    );
-
-    socket.on(
-      "conversation:read",
-      handleConversationRead
+      handleRead
     );
 
     socket.on(
@@ -1466,11 +1507,6 @@ useEffect(() => {
 
 
     return () => {
-      socket.emit(
-        "leave-conversation",
-        conversationId
-      );
-
       socket.off(
         "connect",
         handleConnect
@@ -1488,17 +1524,12 @@ useEffect(() => {
 
       socket.off(
         "message:delivered",
-        handleMessageDelivered
+        handleDelivered
       );
 
       socket.off(
         "message:read",
-        handleMessageRead
-      );
-
-      socket.off(
-        "conversation:read",
-        handleConversationRead
+        handleRead
       );
 
       socket.off(
@@ -1506,18 +1537,201 @@ useEffect(() => {
         handleTyping
       );
 
-      setTypingUsers(new Set());
+      socket.emit(
+        "leave-conversation",
+        conversationId
+      );
     };
   }, [
     conversationId,
-    currentUser,
-    muted,
     loadConversationList,
   ]);
 
 
   /* =======================================================
-     LOAD OLDER MESSAGES
+     MARK INCOMING MESSAGES DELIVERED
+  ======================================================= */
+
+  useEffect(() => {
+    if (
+      !conversationId ||
+      !currentUser ||
+      !messages.length
+    ) {
+      return;
+    }
+
+    const currentId =
+      getId(currentUser);
+
+    const pending =
+      messages.filter(
+        (message) =>
+          getId(
+            message.sender
+          ) !== currentId &&
+          !getReceiptForUser(
+            message,
+            currentId
+          )?.deliveredAt
+      );
+
+    if (!pending.length) {
+      return;
+    }
+
+    let cancelled = false;
+
+    const update =
+      async () => {
+        for (
+          const message of pending
+        ) {
+          if (cancelled) {
+            return;
+          }
+
+          const id =
+            getId(message);
+
+          if (!id) {
+            continue;
+          }
+
+          try {
+            await markMessageDelivered(
+              conversationId,
+              id
+            );
+          } catch {
+            /* Non-critical. */
+          }
+        }
+      };
+
+    update();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    conversationId,
+    currentUser,
+    messages,
+  ]);
+
+
+  /* =======================================================
+     MARK READ
+  ======================================================= */
+
+  const markVisibleMessagesRead =
+    useCallback(
+      async () => {
+        if (
+          !conversationId ||
+          !currentUser ||
+          !messages.length
+        ) {
+          return;
+        }
+
+        const currentId =
+          getId(currentUser);
+
+        const incoming =
+          messages.filter(
+            (message) =>
+              getId(
+                message.sender
+              ) !== currentId
+          );
+
+        if (!incoming.length) {
+          return;
+        }
+
+        const last =
+          incoming[
+            incoming.length - 1
+          ];
+
+        const id =
+          getId(last);
+
+        if (!id) {
+          return;
+        }
+
+        try {
+          const result =
+            await markConversationRead(
+              conversationId,
+              id
+            );
+
+          setReadState(
+            result?.readState ||
+            result?.state ||
+            null
+          );
+
+          setConversations(
+            (previous) =>
+              previous.map(
+                (item) =>
+                  getId(item) ===
+                  conversationId
+                    ? {
+                        ...item,
+                        unreadCount: 0,
+                      }
+                    : item
+              )
+          );
+        } catch {
+          /* Non-critical. */
+        }
+      },
+      [
+        conversationId,
+        currentUser,
+        messages,
+      ]
+    );
+
+
+  useEffect(() => {
+    if (
+      loading ||
+      blocked ||
+      !conversationId ||
+      !messages.length
+    ) {
+      return;
+    }
+
+    const timer =
+      setTimeout(
+        () => {
+          markVisibleMessagesRead();
+        },
+        250
+      );
+
+    return () =>
+      clearTimeout(timer);
+  }, [
+    loading,
+    blocked,
+    conversationId,
+    messages,
+    markVisibleMessagesRead,
+  ]);
+
+
+  /* =======================================================
+     LOAD OLDER
   ======================================================= */
 
   const loadOlderMessages =
@@ -1534,16 +1748,20 @@ useEffect(() => {
       const container =
         messagesContainerRef.current;
 
-      const previousHeight =
-        container?.scrollHeight || 0;
+      const oldHeight =
+        container?.scrollHeight ||
+        0;
 
-      const previousTop =
-        container?.scrollTop || 0;
+      const oldTop =
+        container?.scrollTop ||
+        0;
 
       try {
-        setLoadingOlder(true);
+        setLoadingOlder(
+          true
+        );
 
-        const response =
+        const result =
           await getMessages(
             conversationId,
             {
@@ -1552,80 +1770,53 @@ useEffect(() => {
             }
           );
 
-        const olderMessages =
-          response?.messages || [];
-
-        setMessages((previous) =>
-          mergeMessages(
-            olderMessages,
-            previous
-          )
+        setMessages(
+          (previous) =>
+            mergeMessages(
+              result?.messages ||
+                [],
+              previous
+            )
         );
 
         setHasMoreMessages(
           Boolean(
-            response?.pagination?.hasMore
+            result
+              ?.pagination
+              ?.hasMore
           )
         );
 
         setNextCursor(
-          response?.pagination?.nextCursor ||
+          result
+            ?.pagination
+            ?.nextCursor ||
             null
         );
 
-        requestAnimationFrame(() => {
-          if (!container) {
-            return;
+        requestAnimationFrame(
+          () => {
+            if (!container) {
+              return;
+            }
+
+            container.scrollTop =
+              container.scrollHeight -
+              oldHeight +
+              oldTop;
           }
-
-          const newHeight =
-            container.scrollHeight;
-
-          container.scrollTop =
-            newHeight -
-            previousHeight +
-            previousTop;
-        });
+        );
       } catch (loadError) {
         setError(
           loadError.message ||
             "Unable to load older messages."
         );
       } finally {
-        setLoadingOlder(false);
+        setLoadingOlder(
+          false
+        );
       }
     };
-
-
-  /* =======================================================
-     CLOSE MENU OUTSIDE
-  ======================================================= */
-
-  useEffect(() => {
-    const handleOutsideClick =
-      (event) => {
-        if (
-          chatMenuRef.current &&
-          !chatMenuRef.current.contains(
-            event.target
-          )
-        ) {
-          setShowChatMenu(false);
-        }
-      };
-
-    document.addEventListener(
-      "mousedown",
-      handleOutsideClick
-    );
-
-    return () => {
-      document.removeEventListener(
-        "mousedown",
-        handleOutsideClick
-      );
-    };
-  }, []);
 
 
   /* =======================================================
@@ -1633,290 +1824,108 @@ useEffect(() => {
   ======================================================= */
 
   useEffect(() => {
-    if (initialScrollRef.current) {
-      messagesEndRef.current?.scrollIntoView({
-        behavior: "auto",
-      });
-
-      initialScrollRef.current = false;
+    if (!conversationId) {
       return;
     }
 
-    messagesEndRef.current?.scrollIntoView({
-      behavior: "smooth",
-    });
-  }, [messages.length]);
-
-
-  /* =======================================================
-     FOCUS INPUT
-  ======================================================= */
-
-  useEffect(() => {
     if (
-      !loading &&
-      !blocked
+      initialScrollRef.current
     ) {
-      const timer =
-        setTimeout(() => {
-          inputRef.current?.focus();
-        }, 0);
+      messagesEndRef.current?.scrollIntoView(
+        {
+          behavior: "auto",
+        }
+      );
 
-      return () => {
-        clearTimeout(timer);
-      };
+      initialScrollRef.current =
+        false;
+
+      return;
     }
+
+    messagesEndRef.current?.scrollIntoView(
+      {
+        behavior: "smooth",
+      }
+    );
   }, [
-    loading,
+    messages.length,
     conversationId,
-    blocked,
   ]);
 
 
   /* =======================================================
-     OTHER USER
-  ======================================================= */
-
-  const otherUser =
-    useMemo(
-      () =>
-        getOtherParticipant(
-          conversation,
-          currentUser
-        ),
-      [
-        conversation,
-        currentUser,
-      ]
-    );
-
-
-  const otherUserId =
-    getId(otherUser);
-
-
-  /* =======================================================
-     TYPING LABEL
-  ======================================================= */
-
-  const isOtherTyping =
-    typingUsers.size > 0;
-
-
-  /* =======================================================
-     OWN MESSAGE
-  ======================================================= */
-
-  const isOwnMessage =
-    (message) =>
-      getId(message?.sender) ===
-      getId(currentUser);
-
-
-  /* =======================================================
-     FILTER CONVERSATIONS
+     SEARCH
   ======================================================= */
 
   const filteredConversations =
-    conversations.filter(
-      (item) => {
-        const participant =
-          getOtherParticipant(
-            item,
-            currentUser
+    useMemo(() => {
+      const term =
+        search
+          .trim()
+          .toLowerCase();
+
+      return conversations
+        .filter(
+          (item) =>
+            isValidConversationForUser(
+              item,
+              currentUser
+            )
+        )
+        .filter((item) => {
+          if (!term) {
+            return true;
+          }
+
+          const participant =
+            getOtherParticipant(
+              item,
+              currentUser
+            );
+
+          return (
+            participant?.username
+              ?.toLowerCase()
+              .includes(term)
           );
+        });
+    }, [
+      conversations,
+      currentUser,
+      search,
+    ]);
 
-        const username =
-          participant?.username || "";
-
-        return username
-          .toLowerCase()
-          .includes(
-            search
-              .toLowerCase()
-              .trim()
-          );
-      }
-    );
-
-
-  /* =======================================================
-     FILTER MESSAGES
-  ======================================================= */
 
   const visibleMessages =
-    messages.filter(
-      (message) => {
-        if (
-          !searchMessages ||
-          !messageSearch.trim()
-        ) {
-          return true;
-        }
+    useMemo(() => {
+      const term =
+        messageSearch
+          .trim()
+          .toLowerCase();
 
-        return (
+      if (
+        !searchMessages ||
+        !term
+      ) {
+        return messages;
+      }
+
+      return messages.filter(
+        (message) =>
           message.text
             ?.toLowerCase()
-            .includes(
-              messageSearch
-                .toLowerCase()
-                .trim()
-            )
-        );
-      }
-    );
+            .includes(term)
+      );
+    }, [
+      messages,
+      searchMessages,
+      messageSearch,
+    ]);
 
 
   /* =======================================================
-     MUTE
-  ======================================================= */
-
-  const handleToggleMute =
-    async () => {
-      if (
-        muteLoading ||
-        !conversationId
-      ) {
-        return;
-      }
-
-      try {
-        setMuteLoading(true);
-        setError("");
-
-        const nextMuted =
-          !muted;
-
-        await setConversationMuted(
-          conversationId,
-          nextMuted
-        );
-
-        setMuted(nextMuted);
-        setShowChatMenu(false);
-      } catch (muteError) {
-        setError(
-          muteError.message ||
-            "Unable to update notification settings."
-        );
-      } finally {
-        setMuteLoading(false);
-      }
-    };
-
-
-  /* =======================================================
-     BLOCK
-  ======================================================= */
-
-  const handleBlock =
-    async () => {
-      if (
-        blockLoading ||
-        !otherUser
-      ) {
-        return;
-      }
-
-      try {
-        setBlockLoading(true);
-        setError("");
-
-        await blockUser(
-          otherUserId
-        );
-
-        setBlocked(true);
-        setShowBlockConfirm(false);
-        setShowChatMenu(false);
-      } catch (blockError) {
-        setError(
-          blockError.message ||
-            "Unable to block this user."
-        );
-      } finally {
-        setBlockLoading(false);
-      }
-    };
-
-
-  /* =======================================================
-     UNBLOCK
-  ======================================================= */
-
-  const handleUnblock =
-    async () => {
-      if (
-        blockLoading ||
-        !otherUser
-      ) {
-        return;
-      }
-
-      try {
-        setBlockLoading(true);
-        setError("");
-
-        await unblockUser(
-          otherUserId
-        );
-
-        setBlocked(false);
-        setShowChatMenu(false);
-      } catch (unblockError) {
-        setError(
-          unblockError.message ||
-            "Unable to unblock this user."
-        );
-      } finally {
-        setBlockLoading(false);
-      }
-    };
-
-
-  /* =======================================================
-     REPORT
-  ======================================================= */
-
-  const handleReport =
-    async () => {
-      if (
-        reportLoading ||
-        !otherUser ||
-        !reportReason
-      ) {
-        return;
-      }
-
-      try {
-        setReportLoading(true);
-        setError("");
-
-        await reportUser(
-          otherUserId,
-          reportReason
-        );
-
-        setShowReportModal(false);
-        setReportReason("");
-        setShowChatMenu(false);
-
-        alert(
-          "Thanks. Your report has been submitted."
-        );
-      } catch (reportError) {
-        setError(
-          reportError.message ||
-            "Unable to submit report."
-        );
-      } finally {
-        setReportLoading(false);
-      }
-    };
-
-
-  /* =======================================================
-     TYPING EMISSION
+     TYPING
   ======================================================= */
 
   const emitTyping =
@@ -1941,15 +1950,17 @@ useEffect(() => {
 
   const handleTextChange =
     (event) => {
-      const nextText =
+      const next =
         event.target.value;
 
-      setText(nextText);
+      setText(next);
 
-      if (!nextText.trim()) {
+      if (!next.trim()) {
         emitTyping(false);
 
-        if (typingTimeoutRef.current) {
+        if (
+          typingTimeoutRef.current
+        ) {
           clearTimeout(
             typingTimeoutRef.current
           );
@@ -1960,22 +1971,29 @@ useEffect(() => {
 
       emitTyping(true);
 
-      if (typingTimeoutRef.current) {
+      if (
+        typingTimeoutRef.current
+      ) {
         clearTimeout(
           typingTimeoutRef.current
         );
       }
 
       typingTimeoutRef.current =
-        setTimeout(() => {
-          emitTyping(false);
-        }, 1500);
+        setTimeout(
+          () => {
+            emitTyping(false);
+          },
+          1500
+        );
     };
 
 
   useEffect(() => {
     return () => {
-      if (typingTimeoutRef.current) {
+      if (
+        typingTimeoutRef.current
+      ) {
         clearTimeout(
           typingTimeoutRef.current
         );
@@ -1991,7 +2009,9 @@ useEffect(() => {
         );
       }
     };
-  }, [conversationId]);
+  }, [
+    conversationId,
+  ]);
 
 
   /* =======================================================
@@ -2002,11 +2022,11 @@ useEffect(() => {
     async (event) => {
       event.preventDefault();
 
-      const trimmedText =
+      const clean =
         text.trim();
 
       if (
-        !trimmedText ||
+        !clean ||
         sending ||
         !conversationId ||
         blocked
@@ -2018,33 +2038,54 @@ useEffect(() => {
         setSending(true);
         setError("");
 
-        const response =
+        const result =
           await sendMessage(
             conversationId,
-            trimmedText
+            clean
           );
 
         /*
-         * The socket normally delivers the message.
-         * If the socket is temporarily disconnected,
-         * use the REST response as the local fallback.
+         * REST response is the immediate source
+         * of truth. Socket.IO may also echo the
+         * same message; mergeMessages prevents
+         * duplicates.
          */
-        const sentMessage =
-          response?.message;
+        if (result?.message) {
+          setMessages(
+            (previous) =>
+              mergeMessages(
+                previous,
+                [result.message]
+              )
+          );
 
-        if (sentMessage) {
-          setMessages((previous) =>
-            mergeMessages(
-              previous,
-              [sentMessage]
-            )
+          setConversations(
+            (previous) =>
+              previous.map(
+                (item) =>
+                  getId(item) ===
+                  conversationId
+                    ? {
+                        ...item,
+                        lastMessage:
+                          result.message,
+                        updatedAt:
+                          result.message
+                            .createdAt ||
+                          new Date()
+                            .toISOString(),
+                      }
+                    : item
+              )
           );
         }
 
         setText("");
         emitTyping(false);
 
-        if (typingTimeoutRef.current) {
+        if (
+          typingTimeoutRef.current
+        ) {
           clearTimeout(
             typingTimeoutRef.current
           );
@@ -2054,6 +2095,11 @@ useEffect(() => {
           inputRef.current?.focus();
         }, 0);
       } catch (sendError) {
+        console.error(
+          "Send message error:",
+          sendError
+        );
+
         setError(
           sendError.message ||
             "Unable to send message."
@@ -2080,9 +2126,44 @@ useEffect(() => {
     };
 
 
+  /*
+   * THIS IS THE IMPORTANT MOBILE FIX.
+   *
+   * Old implementation:
+   *
+   *   navigate("/discover")
+   *
+   * That forces users back to Discover.
+   *
+   * New implementation:
+   *
+   *   navigate("/messages")
+   *
+   * So:
+   *
+   * /messages
+   *      ↓
+   * select chat
+   *      ↓
+   * /messages/:id
+   *      ↓
+   * Back
+   *      ↓
+   * /messages
+   */
+  const handleMobileBack =
+    () => {
+      navigate(
+        "/messages"
+      );
+    };
+
+
   const handleViewProfile =
     () => {
-      if (!otherUser?.username) {
+      if (
+        !otherUser?.username
+      ) {
         return;
       }
 
@@ -2094,15 +2175,202 @@ useEffect(() => {
     };
 
 
-  const handleToggleMessageSearch =
-    () => {
-      setSearchMessages(
-        (current) => !current
-      );
+  /* =======================================================
+     MUTE
+  ======================================================= */
 
-      setMessageSearch("");
-      setShowChatMenu(false);
+  const handleToggleMute =
+    async () => {
+      if (
+        muteLoading ||
+        !conversationId
+      ) {
+        return;
+      }
+
+      try {
+        setMuteLoading(true);
+        setError("");
+
+        const next =
+          !muted;
+
+        await setConversationMuted(
+          conversationId,
+          next
+        );
+
+        setMuted(next);
+        setShowChatMenu(false);
+      } catch (muteError) {
+        setError(
+          muteError.message ||
+            "Unable to update notification settings."
+        );
+      } finally {
+        setMuteLoading(false);
+      }
     };
+
+
+  /* =======================================================
+     BLOCK
+  ======================================================= */
+
+  const handleBlock =
+    async () => {
+      if (
+        blockLoading ||
+        !otherUserId
+      ) {
+        return;
+      }
+
+      try {
+        setBlockLoading(
+          true
+        );
+        setError("");
+
+        await blockUser(
+          otherUserId
+        );
+
+        setBlocked(true);
+        setShowBlockConfirm(
+          false
+        );
+        setShowChatMenu(false);
+      } catch (blockError) {
+        setError(
+          blockError.message ||
+            "Unable to block this user."
+        );
+      } finally {
+        setBlockLoading(
+          false
+        );
+      }
+    };
+
+
+  /* =======================================================
+     UNBLOCK
+  ======================================================= */
+
+  const handleUnblock =
+    async () => {
+      if (
+        blockLoading ||
+        !otherUserId
+      ) {
+        return;
+      }
+
+      try {
+        setBlockLoading(
+          true
+        );
+        setError("");
+
+        await unblockUser(
+          otherUserId
+        );
+
+        setBlocked(false);
+        setShowChatMenu(false);
+      } catch (unblockError) {
+        setError(
+          unblockError.message ||
+            "Unable to unblock this user."
+        );
+      } finally {
+        setBlockLoading(
+          false
+        );
+      }
+    };
+
+
+  /* =======================================================
+     REPORT
+  ======================================================= */
+
+  const handleReport =
+    async () => {
+      if (
+        reportLoading ||
+        !otherUserId ||
+        !reportReason
+      ) {
+        return;
+      }
+
+      try {
+        setReportLoading(
+          true
+        );
+        setError("");
+
+        await reportUser(
+          otherUserId,
+          reportReason
+        );
+
+        setShowReportModal(
+          false
+        );
+
+        setReportReason("");
+        setShowChatMenu(false);
+
+        alert(
+          "Thanks. Your report has been submitted."
+        );
+      } catch (reportError) {
+        setError(
+          reportError.message ||
+            "Unable to submit report."
+        );
+      } finally {
+        setReportLoading(
+          false
+        );
+      }
+    };
+
+
+  /* =======================================================
+     OUTSIDE MENU
+  ======================================================= */
+
+  useEffect(() => {
+    const handleOutside =
+      (event) => {
+        if (
+          chatMenuRef.current &&
+          !chatMenuRef.current.contains(
+            event.target
+          )
+        ) {
+          setShowChatMenu(
+            false
+          );
+        }
+      };
+
+    document.addEventListener(
+      "mousedown",
+      handleOutside
+    );
+
+    return () => {
+      document.removeEventListener(
+        "mousedown",
+        handleOutside
+      );
+    };
+  }, []);
 
 
   /* =======================================================
@@ -2134,14 +2402,31 @@ useEffect(() => {
      UI
   ======================================================= */
 
+  /*
+   * IMPORTANT:
+   *
+   * `messages-page-chat-open`
+   * tells the responsive CSS which screen should
+   * occupy the mobile viewport.
+   *
+   * No JavaScript window.innerWidth is required.
+   */
+  const pageClass =
+    conversationId
+      ? "messages-page messages-page-chat-open"
+      : "messages-page";
+
+
   return (
     <AppShell>
 
-      <div className="messages-page">
+      <div
+        className={pageClass}
+      >
 
         {/* =================================================
-            SIDEBAR
-        ================================================== */}
+            CONVERSATION LIST
+        ================================================= */}
 
         <aside className="messages-sidebar">
 
@@ -2158,32 +2443,9 @@ useEffect(() => {
             </div>
 
             <div className="messages-sidebar-icon">
-              <MessageCircle size={19} />
-
-              {totalUnread > 0 && (
-                <span
-                  style={{
-                    position: "absolute",
-                    marginTop: "-30px",
-                    marginLeft: "30px",
-                    minWidth: 18,
-                    height: 18,
-                    padding: "0 5px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    borderRadius: 999,
-                    background: "#6366f1",
-                    color: "#fff",
-                    fontSize: 9,
-                    fontWeight: 800,
-                  }}
-                >
-                  {totalUnread > 99
-                    ? "99+"
-                    : totalUnread}
-                </span>
-              )}
+              <MessageCircle
+                size={19}
+              />
             </div>
 
           </div>
@@ -2191,7 +2453,9 @@ useEffect(() => {
 
           <div className="messages-search">
 
-            <Search size={17} />
+            <Search
+              size={17}
+            />
 
             <input
               type="text"
@@ -2214,7 +2478,9 @@ useEffect(() => {
 
               <div className="messages-sidebar-empty">
 
-                <MessageCircle size={21} />
+                <MessageCircle
+                  size={21}
+                />
 
                 <p>
                   {search
@@ -2234,18 +2500,29 @@ useEffect(() => {
                       currentUser
                     );
 
+                  /*
+                   * Extra guard.
+                   */
+                  if (!participant) {
+                    return null;
+                  }
+
+                  const id =
+                    getId(item);
+
                   const active =
-                    getId(item) ===
+                    id ===
                     conversationId;
 
                   const unreadCount =
                     Number(
-                      item.unreadCount || 0
+                      item.unreadCount ||
+                      0
                     );
 
                   return (
                     <button
-                      key={getId(item)}
+                      key={id}
                       type="button"
                       className={`conversation-item ${
                         active
@@ -2254,25 +2531,30 @@ useEffect(() => {
                       }`}
                       onClick={() =>
                         openConversation(
-                          getId(item)
+                          id
                         )
                       }
                     >
 
                       <div
                         style={{
-                          position: "relative",
+                          position:
+                            "relative",
                           flexShrink: 0,
                         }}
                       >
+
                         <Avatar
-                          user={participant}
+                          user={
+                            participant
+                          }
                           size="medium"
                         />
 
                         <div
                           style={{
-                            position: "absolute",
+                            position:
+                              "absolute",
                             right: 0,
                             bottom: 1,
                           }}
@@ -2284,6 +2566,7 @@ useEffect(() => {
                             size="small"
                           />
                         </div>
+
                       </div>
 
 
@@ -2292,7 +2575,7 @@ useEffect(() => {
                         <div className="conversation-item-top">
 
                           <strong>
-                            {participant?.username ||
+                            {participant.username ||
                               "User"}
                           </strong>
 
@@ -2313,16 +2596,15 @@ useEffect(() => {
                             className="conversation-preview"
                             style={{
                               fontWeight:
-                                unreadCount > 0
+                                unreadCount >
+                                0
                                   ? 700
-                                  : undefined,
-                              color:
-                                unreadCount > 0
-                                  ? "#4f46e5"
                                   : undefined,
                             }}
                           >
-                            {item.lastMessage?.text ||
+                            {item
+                              .lastMessage
+                              ?.text ||
                               "Start a conversation"}
                           </span>
 
@@ -2331,31 +2613,41 @@ useEffect(() => {
                       </div>
 
 
-                      {unreadCount > 0 ? (
+                      {unreadCount >
+                      0 ? (
+
                         <span
                           style={{
                             minWidth: 20,
                             height: 20,
-                            padding: "0 6px",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            borderRadius: 999,
+                            padding:
+                              "0 6px",
+                            display:
+                              "flex",
+                            alignItems:
+                              "center",
+                            justifyContent:
+                              "center",
+                            borderRadius:
+                              999,
                             background:
-                              active
-                                ? "#818cf8"
-                                : "#6366f1",
-                            color: "#fff",
+                              "#6366f1",
+                            color:
+                              "#fff",
                             fontSize: 9,
                             fontWeight: 800,
                           }}
                         >
-                          {unreadCount > 99
+                          {unreadCount >
+                          99
                             ? "99+"
                             : unreadCount}
                         </span>
+
                       ) : active ? (
+
                         <span className="conversation-active-dot" />
+
                       ) : null}
 
                     </button>
@@ -2372,7 +2664,7 @@ useEffect(() => {
 
         {/* =================================================
             CHAT
-        ================================================== */}
+        ================================================= */}
 
         <section className="messages-chat">
 
@@ -2381,7 +2673,9 @@ useEffect(() => {
             <div className="messages-no-conversation">
 
               <div className="messages-no-conversation-icon">
-                <MessageCircle size={30} />
+                <MessageCircle
+                  size={30}
+                />
               </div>
 
               <h2>
@@ -2394,17 +2688,18 @@ useEffect(() => {
               </p>
 
               {error && (
-  <div
-    className="messages-error"
-    style={{
-      marginTop: 16,
-      maxWidth: 420,
-      textAlign: "center",
-    }}
-  >
-    {error}
-  </div>
-)}
+                <div
+                  className="messages-error"
+                  style={{
+                    marginTop: 16,
+                    maxWidth: 420,
+                    textAlign:
+                      "center",
+                  }}
+                >
+                  {error}
+                </div>
+              )}
 
             </div>
 
@@ -2413,27 +2708,36 @@ useEffect(() => {
             <>
 
               {/* ===========================================
-                  HEADER
+                  CHAT HEADER
               ============================================ */}
 
               <header className="chat-header">
 
                 <div className="chat-header-left">
 
-                  <Link
-                    to="/discover"
+                  <button
+                    type="button"
                     className="chat-mobile-back"
+                    onClick={
+                      handleMobileBack
+                    }
+                    aria-label="Back to conversations"
+                    title="Back to conversations"
                   >
-                    <ArrowLeft size={18} />
-                  </Link>
+                    <ArrowLeft
+                      size={18}
+                    />
+                  </button>
 
 
                   <div
                     style={{
-                      position: "relative",
+                      position:
+                        "relative",
                       flexShrink: 0,
                     }}
                   >
+
                     <Avatar
                       user={otherUser}
                       size="large"
@@ -2441,16 +2745,20 @@ useEffect(() => {
 
                     <div
                       style={{
-                        position: "absolute",
+                        position:
+                          "absolute",
                         right: 1,
                         bottom: 1,
                       }}
                     >
                       <PresenceDot
-                        userId={otherUserId}
+                        userId={
+                          otherUserId
+                        }
                         size="small"
                       />
                     </div>
+
                   </div>
 
 
@@ -2465,7 +2773,9 @@ useEffect(() => {
 
                       {!blocked && (
                         <PresenceDot
-                          userId={otherUserId}
+                          userId={
+                            otherUserId
+                          }
                           size="small"
                         />
                       )}
@@ -2475,7 +2785,8 @@ useEffect(() => {
                     <p>
                       {blocked
                         ? "Blocked"
-                        : isOtherTyping
+                        : typingUsers.size >
+                            0
                           ? "Typing..."
                           : (
                             <>
@@ -2505,14 +2816,19 @@ useEffect(() => {
                     type="button"
                     className="chat-more"
                     aria-label="Conversation options"
-                    aria-expanded={showChatMenu}
+                    aria-expanded={
+                      showChatMenu
+                    }
                     onClick={() =>
                       setShowChatMenu(
-                        (current) => !current
+                        (value) =>
+                          !value
                       )
                     }
                   >
-                    <MoreVertical size={19} />
+                    <MoreVertical
+                      size={19}
+                    />
                   </button>
 
 
@@ -2527,7 +2843,9 @@ useEffect(() => {
                           handleViewProfile
                         }
                       >
-                        <UserRound size={17} />
+                        <UserRound
+                          size={17}
+                        />
 
                         <span>
                           View profile
@@ -2538,19 +2856,29 @@ useEffect(() => {
                       <button
                         type="button"
                         className="chat-option"
-                        onClick={
-                          handleToggleMessageSearch
-                        }
+                        onClick={() => {
+                          setSearchMessages(
+                            (value) =>
+                              !value
+                          );
+
+                          setMessageSearch(
+                            ""
+                          );
+
+                          setShowChatMenu(
+                            false
+                          );
+                        }}
                       >
-                        <SearchCheck size={17} />
+                        <SearchCheck
+                          size={17}
+                        />
 
                         <span>
                           Search messages
                         </span>
                       </button>
-
-
-                      <div className="chat-option-divider" />
 
 
                       <button
@@ -2563,16 +2891,14 @@ useEffect(() => {
                           muteLoading
                         }
                       >
-
-                        {muteLoading ? (
-                          <LoaderCircle
+                        {muted ? (
+                          <Volume2
                             size={17}
-                            className="messages-spinner"
                           />
-                        ) : muted ? (
-                          <Volume2 size={17} />
                         ) : (
-                          <VolumeX size={17} />
+                          <VolumeX
+                            size={17}
+                          />
                         )}
 
                         <span>
@@ -2580,7 +2906,6 @@ useEffect(() => {
                             ? "Unmute notifications"
                             : "Mute notifications"}
                         </span>
-
                       </button>
 
 
@@ -2599,7 +2924,6 @@ useEffect(() => {
                             blockLoading
                           }
                         >
-
                           {blockLoading ? (
                             <LoaderCircle
                               size={17}
@@ -2614,7 +2938,6 @@ useEffect(() => {
                           <span>
                             Unblock user
                           </span>
-
                         </button>
 
                       ) : (
@@ -2623,14 +2946,18 @@ useEffect(() => {
                           type="button"
                           className="chat-option chat-option-danger"
                           onClick={() => {
-                            setShowChatMenu(false);
-                            setShowBlockConfirm(true);
+                            setShowChatMenu(
+                              false
+                            );
+
+                            setShowBlockConfirm(
+                              true
+                            );
                           }}
-                          disabled={
-                            blockLoading
-                          }
                         >
-                          <ShieldBan size={17} />
+                          <ShieldBan
+                            size={17}
+                          />
 
                           <span>
                             Block user
@@ -2645,11 +2972,18 @@ useEffect(() => {
                           type="button"
                           className="chat-option chat-option-danger"
                           onClick={() => {
-                            setShowChatMenu(false);
-                            setShowReportModal(true);
+                            setShowChatMenu(
+                              false
+                            );
+
+                            setShowReportModal(
+                              true
+                            );
                           }}
                         >
-                          <Flag size={17} />
+                          <Flag
+                            size={17}
+                          />
 
                           <span>
                             Report user
@@ -2658,7 +2992,6 @@ useEffect(() => {
                       )}
 
                     </div>
-
                   )}
 
                 </div>
@@ -2667,20 +3000,24 @@ useEffect(() => {
 
 
               {/* ===========================================
-                  SEARCH
+                  MESSAGE SEARCH
               ============================================ */}
 
               {searchMessages && (
 
                 <div className="chat-message-search">
 
-                  <Search size={17} />
+                  <Search
+                    size={17}
+                  />
 
                   <input
                     type="text"
                     autoFocus
                     placeholder="Search messages..."
-                    value={messageSearch}
+                    value={
+                      messageSearch
+                    }
                     onChange={(event) =>
                       setMessageSearch(
                         event.target.value
@@ -2691,16 +3028,22 @@ useEffect(() => {
                   <button
                     type="button"
                     onClick={() => {
-                      setSearchMessages(false);
-                      setMessageSearch("");
+                      setSearchMessages(
+                        false
+                      );
+
+                      setMessageSearch(
+                        ""
+                      );
                     }}
                     aria-label="Close message search"
                   >
-                    <X size={17} />
+                    <X
+                      size={17}
+                    />
                   </button>
 
                 </div>
-
               )}
 
 
@@ -2710,7 +3053,9 @@ useEffect(() => {
 
               <div
                 className="chat-messages"
-                ref={messagesContainerRef}
+                ref={
+                  messagesContainerRef
+                }
               >
 
                 {blocked ? (
@@ -2718,7 +3063,9 @@ useEffect(() => {
                   <div className="chat-blocked-state">
 
                     <div className="chat-blocked-icon">
-                      <ShieldBan size={26} />
+                      <ShieldBan
+                        size={26}
+                      />
                     </div>
 
                     <h3>
@@ -2727,8 +3074,9 @@ useEffect(() => {
                     </h3>
 
                     <p>
-                      You won't receive messages
-                      from this person.
+                      You won't receive
+                      messages from this
+                      person.
                     </p>
 
                     <button
@@ -2751,108 +3099,90 @@ useEffect(() => {
 
                   <>
 
-                    {hasMoreMessages &&
-                      !searchMessages && (
-                        <div
+                    {hasMoreMessages && (
+                      <div
+                        style={{
+                          display:
+                            "flex",
+                          justifyContent:
+                            "center",
+                          marginBottom:
+                            18,
+                        }}
+                      >
+                        <button
+                          type="button"
+                          onClick={
+                            loadOlderMessages
+                          }
+                          disabled={
+                            loadingOlder
+                          }
                           style={{
-                            display: "flex",
-                            justifyContent: "center",
-                            marginBottom: 18,
+                            border:
+                              "1px solid #e5e7eb",
+                            borderRadius:
+                              999,
+                            padding:
+                              "7px 13px",
+                            background:
+                              "#fff",
+                            color:
+                              "#6366f1",
+                            fontSize:
+                              11,
+                            fontWeight:
+                              700,
+                            cursor:
+                              loadingOlder
+                                ? "default"
+                                : "pointer",
+                            opacity:
+                              loadingOlder
+                                ? 0.6
+                                : 1,
                           }}
                         >
-                          <button
-                            type="button"
-                            onClick={
-                              loadOlderMessages
-                            }
-                            disabled={
-                              loadingOlder
-                            }
-                            style={{
-                              border: "1px solid #e5e7eb",
-                              borderRadius: 999,
-                              padding: "7px 13px",
-                              background: "#fff",
-                              color: "#6366f1",
-                              fontSize: 11,
-                              fontWeight: 700,
-                              cursor:
-                                loadingOlder
-                                  ? "default"
-                                  : "pointer",
-                              opacity:
-                                loadingOlder
-                                  ? 0.6
-                                  : 1,
-                            }}
-                          >
-                            {loadingOlder ? (
-                              <>
-                                <LoaderCircle
-                                  size={12}
-                                  className="messages-spinner"
-                                  style={{
-                                    marginRight: 5,
-                                    verticalAlign:
-                                      "middle",
-                                  }}
-                                />
-
-                                Loading older messages...
-                              </>
-                            ) : (
-                              "Load older messages"
-                            )}
-                          </button>
-                        </div>
-                      )}
+                          {loadingOlder
+                            ? "Loading..."
+                            : "Load older messages"}
+                        </button>
+                      </div>
+                    )}
 
 
                     {visibleMessages.length ===
                     0 ? (
 
-                      messages.length === 0 ? (
+                      <div className="chat-empty">
 
-                        <div className="chat-empty">
-
-                          <div className="chat-empty-avatar">
-
-                            <Avatar
-                              user={otherUser}
-                              size="large"
-                            />
-
-                          </div>
-
-                          <h3>
-                            Say hello to{" "}
-                            {otherUser?.username}
-                          </h3>
-
-                          <p>
-                            This is the beginning of
-                            your private conversation.
-                          </p>
-
+                        <div className="chat-empty-avatar">
+                          <Avatar
+                            user={
+                              otherUser
+                            }
+                            size="large"
+                          />
                         </div>
 
-                      ) : (
+                        <h3>
+                          {searchMessages &&
+                          messageSearch.trim()
+                            ? "No messages found"
+                            : `Say hello to ${
+                                otherUser?.username ||
+                                "this user"
+                              }`}
+                        </h3>
 
-                        <div className="chat-search-empty">
+                        <p>
+                          {searchMessages &&
+                          messageSearch.trim()
+                            ? "Try a different search term."
+                            : "This is the beginning of your private conversation."}
+                        </p>
 
-                          <Search size={25} />
-
-                          <h3>
-                            No messages found
-                          </h3>
-
-                          <p>
-                            Try a different search term.
-                          </p>
-
-                        </div>
-
-                      )
+                      </div>
 
                     ) : (
 
@@ -2866,19 +3196,27 @@ useEffect(() => {
 
 
                         {visibleMessages.map(
-                          (message, index) => {
+                          (
+                            message,
+                            index
+                          ) => {
                             const mine =
-                              isOwnMessage(
-                                message
+                              getId(
+                                message.sender
+                              ) ===
+                              getId(
+                                currentUser
                               );
 
-                            const messageKey =
-                              getId(message) ||
+                            const key =
+                              getId(
+                                message
+                              ) ||
                               `${message.createdAt}-${index}`;
 
                             return (
                               <div
-                                key={messageKey}
+                                key={key}
                                 className={`message-row ${
                                   mine
                                     ? "message-row-mine"
@@ -2888,7 +3226,9 @@ useEffect(() => {
 
                                 {!mine && (
                                   <Avatar
-                                    user={otherUser}
+                                    user={
+                                      otherUser
+                                    }
                                     size="small"
                                   />
                                 )}
@@ -2920,7 +3260,6 @@ useEffect(() => {
                                         : ""
                                     }`}
                                   >
-
                                     <span>
                                       {formatTime(
                                         message.createdAt
@@ -2932,14 +3271,11 @@ useEffect(() => {
                                         message={
                                           message
                                         }
-                                        currentUserId={
-                                          getId(
-                                            currentUser
-                                          )
-                                        }
+                                        currentUserId={getId(
+                                          currentUser
+                                        )}
                                       />
                                     )}
-
                                   </div>
 
                                 </div>
@@ -2954,72 +3290,80 @@ useEffect(() => {
                     )}
 
 
-                    {isOtherTyping && (
-                      <div
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 8,
-                          marginTop: 2,
-                          marginBottom: 12,
-                        }}
-                      >
+                    {typingUsers.size >
+                      0 && (
+
+                      <div className="message-row message-row-theirs">
+
                         <Avatar
-                          user={otherUser}
+                          user={
+                            otherUser
+                          }
                           size="small"
                         />
 
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 4,
-                            padding: "10px 13px",
-                            borderRadius: 16,
-                            background: "#f1f3f9",
-                          }}
-                        >
-                          <span
-                            style={{
-                              width: 5,
-                              height: 5,
-                              borderRadius: "50%",
-                              background: "#9ca3af",
-                              animation:
-                                "messages-typing-dot 1s infinite",
-                            }}
-                          />
+                        <div className="message-group">
 
-                          <span
-                            style={{
-                              width: 5,
-                              height: 5,
-                              borderRadius: "50%",
-                              background: "#9ca3af",
-                              animation:
-                                "messages-typing-dot 1s 0.15s infinite",
-                            }}
-                          />
+                          <div className="message-bubble message-bubble-theirs">
 
-                          <span
-                            style={{
-                              width: 5,
-                              height: 5,
-                              borderRadius: "50%",
-                              background: "#9ca3af",
-                              animation:
-                                "messages-typing-dot 1s 0.3s infinite",
-                            }}
-                          />
+                            <div
+                              style={{
+                                display:
+                                  "flex",
+                                gap: 4,
+                                alignItems:
+                                  "center",
+                              }}
+                            >
+                              <span
+                                style={{
+                                  width: 5,
+                                  height: 5,
+                                  borderRadius:
+                                    "50%",
+                                  background:
+                                    "#9ca3af",
+                                }}
+                              />
+
+                              <span
+                                style={{
+                                  width: 5,
+                                  height: 5,
+                                  borderRadius:
+                                    "50%",
+                                  background:
+                                    "#9ca3af",
+                                }}
+                              />
+
+                              <span
+                                style={{
+                                  width: 5,
+                                  height: 5,
+                                  borderRadius:
+                                    "50%",
+                                  background:
+                                    "#9ca3af",
+                                }}
+                              />
+                            </div>
+
+                          </div>
+
                         </div>
+
                       </div>
                     )}
 
                   </>
-
                 )}
 
-                <div ref={messagesEndRef} />
+                <div
+                  ref={
+                    messagesEndRef
+                  }
+                />
 
               </div>
 
@@ -3029,9 +3373,11 @@ useEffect(() => {
               ============================================ */}
 
               {error && (
+
                 <div className="messages-error">
                   {error}
                 </div>
+
               )}
 
 
@@ -3042,11 +3388,15 @@ useEffect(() => {
               {blocked ? (
 
                 <div className="chat-composer-blocked">
-                  <ShieldBan size={17} />
+
+                  <ShieldBan
+                    size={17}
+                  />
 
                   <span>
                     You blocked this person.
                   </span>
+
                 </div>
 
               ) : (
@@ -3063,7 +3413,9 @@ useEffect(() => {
                     className="composer-icon"
                     aria-label="Emoji"
                   >
-                    <Smile size={20} />
+                    <Smile
+                      size={20}
+                    />
                   </button>
 
 
@@ -3085,7 +3437,9 @@ useEffect(() => {
                     className="composer-icon"
                     aria-label="Attach file"
                   >
-                    <Paperclip size={19} />
+                    <Paperclip
+                      size={19}
+                    />
                   </button>
 
 
@@ -3104,16 +3458,16 @@ useEffect(() => {
                         className="messages-spinner"
                       />
                     ) : (
-                      <Send size={18} />
+                      <Send
+                        size={18}
+                      />
                     )}
                   </button>
 
                 </form>
-
               )}
 
             </>
-
           )}
 
         </section>
@@ -3134,7 +3488,9 @@ useEffect(() => {
               event.target ===
               event.currentTarget
             ) {
-              setShowBlockConfirm(false);
+              setShowBlockConfirm(
+                false
+              );
             }
           }}
         >
@@ -3145,16 +3501,22 @@ useEffect(() => {
               type="button"
               className="chat-modal-close"
               onClick={() =>
-                setShowBlockConfirm(false)
+                setShowBlockConfirm(
+                  false
+                )
               }
               aria-label="Close"
             >
-              <X size={18} />
+              <X
+                size={18}
+              />
             </button>
 
 
             <div className="chat-modal-icon chat-modal-icon-danger">
-              <ShieldBan size={24} />
+              <ShieldBan
+                size={24}
+              />
             </div>
 
 
@@ -3164,9 +3526,9 @@ useEffect(() => {
             </h2>
 
             <p>
-              They won't be able to send you
-              messages while blocked. You can
-              unblock them later.
+              They won't be able to send
+              you messages while blocked.
+              You can unblock them later.
             </p>
 
 
@@ -3176,9 +3538,13 @@ useEffect(() => {
                 type="button"
                 className="chat-modal-secondary"
                 onClick={() =>
-                  setShowBlockConfirm(false)
+                  setShowBlockConfirm(
+                    false
+                  )
                 }
-                disabled={blockLoading}
+                disabled={
+                  blockLoading
+                }
               >
                 Cancel
               </button>
@@ -3189,7 +3555,9 @@ useEffect(() => {
                 onClick={
                   handleBlock
                 }
-                disabled={blockLoading}
+                disabled={
+                  blockLoading
+                }
               >
                 {blockLoading ? (
                   <>
@@ -3202,7 +3570,9 @@ useEffect(() => {
                   </>
                 ) : (
                   <>
-                    <ShieldBan size={16} />
+                    <ShieldBan
+                      size={16}
+                    />
 
                     Block user
                   </>
@@ -3214,7 +3584,6 @@ useEffect(() => {
           </div>
 
         </div>
-
       )}
 
 
@@ -3231,7 +3600,9 @@ useEffect(() => {
               event.target ===
               event.currentTarget
             ) {
-              setShowReportModal(false);
+              setShowReportModal(
+                false
+              );
             }
           }}
         >
@@ -3242,16 +3613,22 @@ useEffect(() => {
               type="button"
               className="chat-modal-close"
               onClick={() =>
-                setShowReportModal(false)
+                setShowReportModal(
+                  false
+                )
               }
               aria-label="Close"
             >
-              <X size={18} />
+              <X
+                size={18}
+              />
             </button>
 
 
             <div className="chat-modal-icon">
-              <Flag size={23} />
+              <Flag
+                size={23}
+              />
             </div>
 
 
@@ -3281,7 +3658,8 @@ useEffect(() => {
                     key={reason}
                     type="button"
                     className={`report-reason ${
-                      reportReason === reason
+                      reportReason ===
+                      reason
                         ? "report-reason-active"
                         : ""
                     }`}
@@ -3312,12 +3690,17 @@ useEffect(() => {
                 type="button"
                 className="chat-modal-secondary"
                 onClick={() =>
-                  setShowReportModal(false)
+                  setShowReportModal(
+                    false
+                  )
                 }
-                disabled={reportLoading}
+                disabled={
+                  reportLoading
+                }
               >
                 Cancel
               </button>
+
 
               <button
                 type="button"
@@ -3341,7 +3724,9 @@ useEffect(() => {
                   </>
                 ) : (
                   <>
-                    <Flag size={16} />
+                    <Flag
+                      size={16}
+                    />
 
                     Submit report
                   </>
@@ -3353,8 +3738,8 @@ useEffect(() => {
           </div>
 
         </div>
-
       )}
+
 
       <style>
         {`
@@ -3378,4 +3763,3 @@ useEffect(() => {
 
 
 export default Messages;
-

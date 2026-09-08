@@ -1,24 +1,56 @@
-const normalizeBaseUrl = (value) => value?.replace(/\/$/, "");
+const normalizeBaseUrl = (value) => {
+  if (!value) {
+    return "";
+  }
 
-const configuredApiUrl = normalizeBaseUrl(import.meta.env.VITE_API_URL);
-const configuredSocketUrl = normalizeBaseUrl(import.meta.env.VITE_SOCKET_URL);
+  return value
+    .trim()
+    .replace(/\/$/, "");
+};
+
+const configuredApiUrl =
+  normalizeBaseUrl(
+    import.meta.env.VITE_API_URL
+  );
+
+const configuredSocketUrl =
+  normalizeBaseUrl(
+    import.meta.env.VITE_SOCKET_URL
+  );
 
 /*
- * In production, API requests go through the Vercel proxy.
- *
- * This is important for authentication because the browser then
- * sees the API and the frontend as the same origin.
- */
+|--------------------------------------------------------------------------
+| API
+|--------------------------------------------------------------------------
+|
+| Production:
+|
+| Frontend:
+| https://cochat-alpha.vercel.app
+|
+| Backend:
+| https://cochat-g7qi.onrender.com
+|
+| Authentication cookies belong to the backend origin.
+|
+| Therefore HTTP API and Socket.IO must use the SAME backend
+| origin.
+|
+|--------------------------------------------------------------------------
+*/
+
 export const API_BASE_URL =
-  import.meta.env.PROD
-    ? "/api"
-    : configuredApiUrl || "http://localhost:5000/api";
+  configuredApiUrl ||
+  (import.meta.env.PROD
+    ? "https://cochat-g7qi.onrender.com/api"
+    : "http://localhost:5000/api");
 
 /*
- * Socket.IO still connects directly to the backend.
- * We are keeping this separate because Vercel rewrites are intended
- * for HTTP requests and should not be relied upon as a WebSocket proxy.
- */
+|--------------------------------------------------------------------------
+| SOCKET
+|--------------------------------------------------------------------------
+*/
+
 export const SOCKET_URL =
   configuredSocketUrl ||
   (import.meta.env.PROD

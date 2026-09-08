@@ -18,77 +18,235 @@ const {
 const router = express.Router();
 
 /*
-  ============================================================
-  HELPERS
-  ============================================================
+|--------------------------------------------------------------------------
+| HELPERS
+|--------------------------------------------------------------------------
 */
 
-/*
-  Get a direct conversation belonging to the current user.
-*/
-const getDirectConversationForUser = async (
-  conversationId,
-  userId
-) => {
-  return Conversation.findOne({
-    _id: conversationId,
-    type: "direct",
-    participants: userId,
-  });
+const getId = (value) => {
+  if (!value) return null;
+
+  if (value._id) {
+    return value._id.toString();
+  }
+
+  return value.toString();
 };
 
 
 /*
-  Check whether two users are connected.
-*/
-const areConnected = async (userA, userB) => {
-  const connection = await Connection.findOne({
-    $or: [
-      {
-        requester: userA,
-        recipient: userB,
+ * A valid direct conversation must:
+ *
+ * 1. Be a non-group conversation
+ * 2. Have exactly 2 participants
+ * 3. Have 2 unique participants
+ * 4. Include the current user
+ */
+const isValidDirectConversation = (
+  conversation,
+  userId = null
+) => {
+  if (!conversation) {
+    return false;
+  }
+
+  /*
+   * Current Conversation model uses isGroup.
+   *
+   * We intentionally do NOT depend on the old
+   * `type: "direct"` field.
+   */
+  if (conversation.isGroup === true) {
+    return false;
+  }
+
+  const participants = Array.isArray(
+    conversation.participants
+  )
+    ? conversation.participants
+    : [];
+
+  if (participants.length !== 2) {
+    return false;
+  }
+
+  const participantIds = participants
+    .map(getId)
+    .filter(Boolean);
+
+  if (participantIds.length !== 2) {
+    return false;
+  }
+
+  if (
+    new Set(participantIds).size !== 2
+  ) {
+    return false;
+  }
+
+  if (
+    userId &&
+    !participantIds.includes(
+      getId(userId)
+    )
+  ) {
+    return false;
+  }
+
+  return true;
+};
+
+
+/*
+ * Find a valid direct conversation between
+ * two different users.
+ */
+const getDirectConversationForUserPair = async (
+  userA,
+  userB
+) => {
+  const userAId = getId(userA);
+  const userBId = getId(userB);
+
+  /*
+   * Never resolve a self-conversation.
+   */
+  if (!userAId || !userBId) {
+    return null;
+  }
+
+  if (userAId === userBId) {
+    return null;
+  }
+
+  const conversations =
+    await Conversation.find({
+      isGroup: false,
+      participants: {
+        $all: [userA, userB],
       },
-      {
-        requester: userB,
-        recipient: userA,
-      },
-    ],
-    status: "accepted",
-  });
+    }).sort({
+      updatedAt: -1,
+    });
+
+  /*
+   * Do defensive validation in JavaScript.
+   *
+   * This also makes the code safe if old malformed
+   * documents exist in MongoDB.
+   */
+  return (
+    conversations.find(
+      (conversation) =>
+        isValidDirectConversation(
+          conversation
+        ) &&
+        conversation.participants.some(
+          (participant) =>
+            getId(participant) === userAId
+        ) &&
+        conversation.participants.some(
+          (participant) =>
+            getId(participant) === userBId
+        )
+    ) || null
+  );
+};
+
+
+/*
+ * Find a direct conversation belonging to
+ * the current user.
+ */
+const getDirectConversationForUser = async (
+  conversationId,
+  userId
+) => {
+  if (
+    !mongoose.Types.ObjectId.isValid(
+      conversationId
+    )
+  ) {
+    return null;
+  }
+
+  const conversation =
+    await Conversation.findOne({
+      _id: conversationId,
+      isGroup: false,
+      participants: userId,
+    });
+
+  if (
+    !isValidDirectConversation(
+      conversation,
+      userId
+    )
+  ) {
+    return null;
+  }
+
+  return conversation;
+};
+
+
+/*
+ * Check whether two users are connected.
+ */
+const areConnected = async (
+  userA,
+  userB
+) => {
+  const connection =
+    await Connection.findOne({
+      $or: [
+        {
+          requester: userA,
+          recipient: userB,
+        },
+        {
+          requester: userB,
+          recipient: userA,
+        },
+      ],
+      status: "accepted",
+    });
 
   return Boolean(connection);
 };
 
 
 /*
-  Check whether either user has blocked the other.
-*/
-const areBlocked = async (userA, userB) => {
-  const block = await Block.findOne({
-    $or: [
-      {
-        blocker: userA,
-        blocked: userB,
-      },
-      {
-        blocker: userB,
-        blocked: userA,
-      },
-    ],
-  });
+ * Check whether either user has blocked
+ * the other.
+ */
+const areBlocked = async (
+  userA,
+  userB
+) => {
+  const block =
+    await Block.findOne({
+      $or: [
+        {
+          blocker: userA,
+          blocked: userB,
+        },
+        {
+          blocker: userB,
+          blocked: userA,
+        },
+      ],
+    });
 
   return Boolean(block);
 };
 
-const getDirectKey = (userA, userB) =>
-  [userA.toString(), userB.toString()].sort().join(":");
-
 
 /*
-  Send an in-app notification and push notification.
-*/
+ * Send an in-app notification and push
+ * notification.
+ */
 const notifyUser = async ({
-  req,
   recipient,
   actor = null,
   type,
@@ -98,29 +256,28 @@ const notifyUser = async ({
   tag,
 }) => {
   try {
-    const notification = await createNotification({
-      recipient,
-      actor,
-      type,
-      title,
-      body,
-      url,
-    });
+    const notification =
+      await createNotification({
+        recipient,
+        actor,
+        type,
+        title,
+        body,
+        url,
+      });
 
-    /*
-      Push notification.
-      Message requests do not belong to a conversation,
-      so there is no conversation mute check here.
-    */
-    await sendPushNotification(recipient, {
-      title,
-      body,
-      type,
-      url,
-      tag:
-        tag ||
-        `cochat-${type}-${Date.now()}`,
-    });
+    await sendPushNotification(
+      recipient,
+      {
+        title,
+        body,
+        type,
+        url,
+        tag:
+          tag ||
+          `cochat-${type}-${Date.now()}`,
+      }
+    );
 
     return notification;
   } catch (error) {
@@ -129,260 +286,402 @@ const notifyUser = async ({
       error
     );
 
+    /*
+     * Notification failure must never
+     * break the actual operation.
+     */
     return null;
   }
 };
 
 
 /*
-  ============================================================
-  DIRECT CONVERSATIONS
-  ============================================================
+|--------------------------------------------------------------------------
+| CREATE / GET DIRECT CONVERSATION
+|--------------------------------------------------------------------------
+|
+| POST /api/conversations
+|
+| Creates a conversation with a connected
+| user or returns the existing one.
+|
+|--------------------------------------------------------------------------
 */
 
-/*
-  POST /api/conversations
+router.post(
+  "/",
+  protect,
+  async (req, res) => {
+    try {
+      const { userId } = req.body;
 
-  Create or return a 1-to-1 conversation.
+      const currentUserId =
+        req.user._id.toString();
 
-  IMPORTANT:
-  This route is ONLY for direct conversations.
-  Group conversations are handled by /api/groups.
-*/
-router.post("/", protect, async (req, res) => {
-  try {
-    const { userId } = req.body;
-
-    if (!userId) {
-      return res.status(400).json({
-        success: false,
-        message: "User ID is required.",
-      });
-    }
-
-    if (!mongoose.Types.ObjectId.isValid(userId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid user ID.",
-      });
-    }
-
-    /*
-      Don't allow messaging yourself.
-    */
-    if (
-      req.user._id.toString() ===
-      userId.toString()
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "You cannot start a conversation with yourself.",
-      });
-    }
-
-    /*
-      Check target user.
-    */
-    const targetUser =
-      await User.findById(userId);
-
-    if (!targetUser) {
-      return res.status(404).json({
-        success: false,
-        message: "User not found.",
-      });
-    }
-
-    /*
-      Don't allow creating a conversation
-      with a blocked user.
-    */
-    if (
-      await areBlocked(
-        req.user._id,
-        userId
-      )
-    ) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "You cannot start a conversation with this user.",
-      });
-    }
-
-    /*
-      Only search DIRECT conversations.
-    */
-    const directKey = getDirectKey(
-      req.user._id,
-      userId
-    );
-
-    let existingConversation =
-      await Conversation.findOne({
-        type: "direct",
-        directKey,
-      }).populate(
-        "participants",
-        "username avatar bio college branch semester"
-      );
-
-    // Backfill the key for older conversations created before this safeguard.
-    if (!existingConversation) {
-      existingConversation = await Conversation.findOne({
-        type: "direct",
-        participants: { $all: [req.user._id, userId] },
-      }).populate(
-        "participants",
-        "username avatar bio college branch semester"
-      );
-
-      if (existingConversation && !existingConversation.directKey) {
-        existingConversation.directKey = directKey;
-        await existingConversation.save();
+      /*
+       * Validate userId.
+       */
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required.",
+        });
       }
-    }
 
-    /*
-      Return existing conversation.
-    */
-    if (existingConversation) {
-      return res.status(200).json({
-        success: true,
-        conversation:
-          existingConversation,
-      });
-    }
+      if (
+        !mongoose.Types.ObjectId.isValid(
+          userId
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message: "Invalid user ID.",
+        });
+      }
 
-    /*
-      Only connected users can directly
-      create a conversation.
+      const targetUserId =
+        userId.toString();
 
-      First contact should go through
-      message requests.
-    */
-    const connected = await areConnected(
-      req.user._id,
-      userId
-    );
+      /*
+       * HARD SELF-CHAT PROTECTION.
+       */
+      if (
+        currentUserId === targetUserId
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "You cannot start a conversation with yourself.",
+        });
+      }
 
-    if (!connected) {
-      return res.status(403).json({
-        success: false,
-        message:
-          "You can only start a conversation with a connected user. Send a message request instead.",
-      });
-    }
+      /*
+       * Make sure target exists.
+       */
+      const targetUser =
+        await User.findById(userId);
 
-    /*
-      Create DIRECT conversation.
-    */
-    const conversation =
-      await Conversation.findOneAndUpdate(
-        { type: "direct", directKey },
-        {
-          $setOnInsert: {
-            type: "direct",
-            directKey,
-            participants: [req.user._id, userId],
-          },
-        },
-        {
-          upsert: true,
-          new: true,
-          setDefaultsOnInsert: true,
+      if (!targetUser) {
+        return res.status(404).json({
+          success: false,
+          message: "User not found.",
+        });
+      }
+
+      /*
+       * Block protection.
+       */
+      if (
+        await areBlocked(
+          req.user._id,
+          userId
+        )
+      ) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "You cannot start a conversation with this user.",
+        });
+      }
+
+      /*
+       * First look for an existing valid
+       * conversation.
+       */
+      let conversation =
+        await getDirectConversationForUserPair(
+          req.user._id,
+          userId
+        );
+
+      if (conversation) {
+        /*
+         * Ensure participant states exist.
+         */
+        if (
+          typeof conversation.ensureParticipantStates ===
+          "function"
+        ) {
+          conversation.ensureParticipantStates();
+
+          if (
+            conversation.isModified(
+              "participantStates"
+            )
+          ) {
+            await conversation.save();
+          }
         }
-      );
 
-    /*
-      Populate before returning.
-    */
-    const populatedConversation =
-      await Conversation.findById(
-        conversation._id
-      ).populate(
-        "participants",
-        "username avatar bio college branch semester"
-      );
+        const populated =
+          await Conversation.findById(
+            conversation._id
+          )
+            .populate(
+              "participants",
+              "username avatar bio college branch semester"
+            )
+            .populate(
+              "lastMessage",
+              "text sender createdAt"
+            );
 
-    return res.status(201).json({
-      success: true,
-      conversation:
-        populatedConversation,
-    });
-  } catch (error) {
-    console.error(
-      "Create conversation error:",
-      error
-    );
+        return res.status(200).json({
+          success: true,
+          conversation: populated,
+        });
+      }
 
-    return res.status(500).json({
-      success: false,
-      message:
-        "Unable to create conversation.",
-    });
-  }
-});
+      /*
+       * Only connected users can create a
+       * normal conversation.
+       *
+       * Otherwise they must send a request.
+       */
+      const connected =
+        await areConnected(
+          req.user._id,
+          userId
+        );
 
+      if (!connected) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "You can only start a conversation with a connected user. Send a message request instead.",
+        });
+      }
 
-/*
-  GET /api/conversations
-
-  Get current user's DIRECT conversations.
-
-  Groups intentionally do NOT appear here.
-*/
-router.get("/", protect, async (req, res) => {
-  try {
-    const conversations =
-      await Conversation.find({
-        type: "direct",
-        participants: req.user._id,
-      })
-        .populate(
-          "participants",
-          "username avatar bio college branch semester"
-        )
-        .populate(
-          "lastMessage",
-          "text sender createdAt"
-        )
-        .sort({
-          updatedAt: -1,
+      /*
+       * Create the conversation.
+       *
+       * We do NOT use `type` or `directKey`
+       * because the current Conversation model
+       * uses `isGroup`.
+       */
+      conversation =
+        await Conversation.create({
+          participants: [
+            req.user._id,
+            userId,
+          ],
+          isGroup: false,
         });
 
-    return res.status(200).json({
-      success: true,
-      conversations,
-    });
-  } catch (error) {
-    console.error(
-      "Get conversations error:",
-      error
-    );
+      /*
+       * Ensure participant states.
+       */
+      if (
+        typeof conversation.ensureParticipantStates ===
+        "function"
+      ) {
+        conversation.ensureParticipantStates();
+        await conversation.save();
+      }
 
-    return res.status(500).json({
-      success: false,
-      message:
-        "Unable to load conversations.",
-    });
+      const populatedConversation =
+        await Conversation.findById(
+          conversation._id
+        )
+          .populate(
+            "participants",
+            "username avatar bio college branch semester"
+          )
+          .populate(
+            "lastMessage",
+            "text sender createdAt"
+          );
+
+      return res.status(201).json({
+        success: true,
+        conversation:
+          populatedConversation,
+      });
+    } catch (error) {
+      console.error(
+        "Create conversation error:",
+        error
+      );
+
+      /*
+       * Race-condition protection:
+       *
+       * If another request created the same
+       * conversation simultaneously, try to
+       * return the existing valid conversation.
+       */
+      try {
+        const { userId } = req.body;
+
+        if (
+          userId &&
+          mongoose.Types.ObjectId.isValid(
+            userId
+          ) &&
+          req.user._id.toString() !==
+            userId.toString()
+        ) {
+          const existing =
+            await getDirectConversationForUserPair(
+              req.user._id,
+              userId
+            );
+
+          if (existing) {
+            const populated =
+              await Conversation.findById(
+                existing._id
+              )
+                .populate(
+                  "participants",
+                  "username avatar bio college branch semester"
+                )
+                .populate(
+                  "lastMessage",
+                  "text sender createdAt"
+                );
+
+            return res.status(200).json({
+              success: true,
+              conversation: populated,
+            });
+          }
+        }
+      } catch (recoveryError) {
+        console.error(
+          "Conversation recovery error:",
+          recoveryError
+        );
+      }
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Unable to create conversation.",
+      });
+    }
   }
-});
+);
 
 
 /*
-  ============================================================
-  MESSAGE REQUESTS
-  ============================================================
+|--------------------------------------------------------------------------
+| GET ALL DIRECT CONVERSATIONS
+|--------------------------------------------------------------------------
+|
+| GET /api/conversations
+|
+| This powers the mobile /messages page.
+|
+|--------------------------------------------------------------------------
 */
+
+router.get(
+  "/",
+  protect,
+  async (req, res) => {
+    try {
+      const currentUserId =
+        req.user._id.toString();
+
+      /*
+       * Get every non-group conversation
+       * containing the current user.
+       */
+      const conversations =
+        await Conversation.find({
+          isGroup: false,
+          participants: req.user._id,
+        })
+          .populate(
+            "participants",
+            "username avatar bio college branch semester"
+          )
+          .populate(
+            "lastMessage",
+            "text sender createdAt"
+          )
+          .sort({
+            lastMessageAt: -1,
+            updatedAt: -1,
+          })
+          .lean();
+
+      /*
+       * Defensive filtering.
+       *
+       * This is critical for old malformed
+       * self-conversation documents.
+       */
+      const safeConversations =
+        conversations.filter(
+          (conversation) => {
+            if (
+              !isValidDirectConversation(
+                conversation,
+                req.user._id
+              )
+            ) {
+              return false;
+            }
+
+            const participantIds =
+              conversation.participants.map(
+                getId
+              );
+
+            /*
+             * Make sure the other participant
+             * actually exists.
+             */
+            const otherParticipantId =
+              participantIds.find(
+                (id) =>
+                  id !== currentUserId
+              );
+
+            if (
+              !otherParticipantId ||
+              otherParticipantId ===
+                currentUserId
+            ) {
+              return false;
+            }
+
+            return true;
+          }
+        );
+
+      return res.status(200).json({
+        success: true,
+        conversations:
+          safeConversations,
+      });
+    } catch (error) {
+      console.error(
+        "Get conversations error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          "Unable to load conversations.",
+      });
+    }
+  }
+);
 
 
 /*
-  GET /api/conversations/requests
-
-  Get incoming pending message requests.
+|--------------------------------------------------------------------------
+| MESSAGE REQUESTS
+|--------------------------------------------------------------------------
+|
+| GET /api/conversations/requests
+|--------------------------------------------------------------------------
 */
+
 router.get(
   "/requests",
   protect,
@@ -426,13 +725,14 @@ router.get(
 
 
 /*
-  GET /api/conversations/requests/sent
-
-  Get requests sent by current user.
-
-  We return all statuses so the frontend can
-  display pending / accepted / declined history.
+|--------------------------------------------------------------------------
+| SENT MESSAGE REQUESTS
+|--------------------------------------------------------------------------
+|
+| GET /api/conversations/requests/sent
+|--------------------------------------------------------------------------
 */
+
 router.get(
   "/requests/sent",
   protect,
@@ -471,10 +771,14 @@ router.get(
 
 
 /*
-  POST /api/conversations/requests
-
-  Send a first-contact message request.
+|--------------------------------------------------------------------------
+| SEND MESSAGE REQUEST
+|--------------------------------------------------------------------------
+|
+| POST /api/conversations/requests
+|--------------------------------------------------------------------------
 */
+
 router.post(
   "/requests",
   protect,
@@ -486,11 +790,13 @@ router.post(
       } = req.body;
 
       const cleanText =
-        text?.trim();
+        typeof text === "string"
+          ? text.trim()
+          : "";
 
       /*
-        Validate recipient.
-      */
+       * Validate recipient.
+       */
       if (!userId) {
         return res.status(400).json({
           success: false,
@@ -512,8 +818,8 @@ router.post(
       }
 
       /*
-        Validate message.
-      */
+       * Message validation.
+       */
       if (!cleanText) {
         return res.status(400).json({
           success: false,
@@ -531,8 +837,8 @@ router.post(
       }
 
       /*
-        Prevent self-request.
-      */
+       * Self-request protection.
+       */
       if (
         req.user._id.toString() ===
         userId.toString()
@@ -545,8 +851,8 @@ router.post(
       }
 
       /*
-        Check recipient exists.
-      */
+       * Recipient.
+       */
       const recipient =
         await User.findById(userId);
 
@@ -559,8 +865,8 @@ router.post(
       }
 
       /*
-        Block check.
-      */
+       * Block protection.
+       */
       if (
         await areBlocked(
           req.user._id,
@@ -575,9 +881,8 @@ router.post(
       }
 
       /*
-        If already connected, a request
-        is unnecessary.
-      */
+       * Already connected.
+       */
       if (
         await areConnected(
           req.user._id,
@@ -592,19 +897,13 @@ router.post(
       }
 
       /*
-        If an existing conversation exists,
-        don't create another request.
-      */
+       * Existing conversation.
+       */
       const existingConversation =
-        await Conversation.findOne({
-          type: "direct",
-          participants: {
-            $all: [
-              req.user._id,
-              userId,
-            ],
-          },
-        });
+        await getDirectConversationForUserPair(
+          req.user._id,
+          userId
+        );
 
       if (existingConversation) {
         return res.status(400).json({
@@ -615,9 +914,8 @@ router.post(
       }
 
       /*
-        Prevent duplicate pending request
-        in either direction.
-      */
+       * Duplicate pending request.
+       */
       const existingPendingRequest =
         await MessageRequest.findOne({
           $or: [
@@ -646,8 +944,8 @@ router.post(
       }
 
       /*
-        Create request.
-      */
+       * Create request.
+       */
       const request =
         await MessageRequest.create({
           sender: req.user._id,
@@ -656,9 +954,6 @@ router.post(
           status: "pending",
         });
 
-      /*
-        Populate request.
-      */
       const populatedRequest =
         await MessageRequest.findById(
           request._id
@@ -673,10 +968,9 @@ router.post(
           );
 
       /*
-        Notify recipient.
-      */
+       * Notify recipient.
+       */
       await notifyUser({
-        req,
         recipient: userId,
         actor: req.user._id,
         type: "message-request",
@@ -690,6 +984,33 @@ router.post(
         tag:
           `message-request-${request._id}`,
       });
+
+      /*
+       * Realtime request event.
+       */
+      const io = req.app.get("io");
+
+      if (io) {
+        io.to(
+          `user:${userId.toString()}`
+        ).emit(
+          "message-request:new",
+          {
+            request:
+              populatedRequest,
+          }
+        );
+
+        /*
+         * Also emit the generic request
+         * event used by AppShell.
+         */
+        io.to(
+          `user:${userId.toString()}`
+        ).emit(
+          "connection-request:updated"
+        );
+      }
 
       return res.status(201).json({
         success: true,
@@ -715,15 +1036,14 @@ router.post(
 
 
 /*
-  PATCH /api/conversations/requests/:requestId/accept
-
-  Accept an incoming message request.
-
-  This creates:
-  1. A direct conversation.
-  2. The original request message as the
-     first message in that conversation.
+|--------------------------------------------------------------------------
+| ACCEPT MESSAGE REQUEST
+|--------------------------------------------------------------------------
+|
+| PATCH /api/conversations/requests/:requestId/accept
+|--------------------------------------------------------------------------
 */
+
 router.patch(
   "/requests/:requestId/accept",
   protect,
@@ -746,8 +1066,8 @@ router.patch(
       }
 
       /*
-        Only recipient can accept.
-      */
+       * Only recipient can accept.
+       */
       const request =
         await MessageRequest.findOne({
           _id: requestId,
@@ -764,8 +1084,8 @@ router.patch(
       }
 
       /*
-        Block safety check.
-      */
+       * Block protection.
+       */
       if (
         await areBlocked(
           req.user._id,
@@ -780,43 +1100,74 @@ router.patch(
       }
 
       /*
-        Find existing direct conversation
-        first, just in case one was created
-        elsewhere.
-      */
+       * Find existing valid conversation.
+       */
       let conversation =
-        await Conversation.findOne({
-          type: "direct",
-          participants: {
-            $all: [
-              request.sender,
-              request.recipient,
-            ],
-          },
-        });
+        await getDirectConversationForUserPair(
+          request.sender,
+          request.recipient
+        );
 
       /*
-        Create conversation if needed.
-      */
+       * Create if necessary.
+       */
       if (!conversation) {
         conversation =
           await Conversation.create({
-            type: "direct",
             participants: [
               request.sender,
               request.recipient,
             ],
+            isGroup: false,
           });
       }
 
       /*
-        Prevent the original request from
-        being duplicated as a message if
-        this endpoint somehow gets retried.
-      */
+       * Validate conversation before
+       * creating the first message.
+       */
+      if (
+        !isValidDirectConversation(
+          conversation
+        )
+      ) {
+        return res.status(500).json({
+          success: false,
+          message:
+            "Unable to create a valid conversation.",
+        });
+      }
+
+      /*
+       * Ensure participant states.
+       */
+      if (
+        typeof conversation.ensureParticipantStates ===
+        "function"
+      ) {
+        conversation.ensureParticipantStates();
+      }
+
+      /*
+       * Create the request's original
+       * message only once.
+       */
       let firstMessage = null;
 
       if (!request.conversation) {
+        const receipts =
+          conversation.participants
+            .filter(
+              (participant) =>
+                getId(participant) !==
+                getId(request.sender)
+            )
+            .map((participant) => ({
+              user: participant,
+              deliveredAt: null,
+              readAt: null,
+            }));
+
         firstMessage =
           await Message.create({
             conversation:
@@ -825,28 +1176,46 @@ router.patch(
               request.sender,
             text:
               request.text,
+            receipts,
           });
 
         conversation.lastMessage =
           firstMessage._id;
 
-        await conversation.save();
+        conversation.lastMessageAt =
+          firstMessage.createdAt;
+
+        conversation.lastMessagePreview =
+          request.text;
+
+        if (
+          typeof conversation.incrementUnreadForOthers ===
+          "function"
+        ) {
+          conversation.incrementUnreadForOthers(
+            request.sender
+          );
+        }
 
         request.conversation =
           conversation._id;
       }
 
       /*
-        Mark request accepted.
-      */
-      request.status =
-        "accepted";
+       * Save conversation.
+       */
+      await conversation.save();
+
+      /*
+       * Accept request.
+       */
+      request.status = "accepted";
 
       await request.save();
 
       /*
-        Populate conversation.
-      */
+       * Populate conversation.
+       */
       const populatedConversation =
         await Conversation.findById(
           conversation._id
@@ -861,8 +1230,8 @@ router.patch(
           );
 
       /*
-        Populate first message.
-      */
+       * Populate first message.
+       */
       if (firstMessage) {
         firstMessage =
           await Message.findById(
@@ -874,10 +1243,9 @@ router.patch(
       }
 
       /*
-        Notify sender that request was accepted.
-      */
+       * Notify sender.
+       */
       await notifyUser({
-        req,
         recipient: request.sender,
         actor: req.user._id,
         type:
@@ -896,8 +1264,8 @@ router.patch(
       });
 
       /*
-        Real-time conversation update.
-      */
+       * Realtime.
+       */
       const io = req.app.get("io");
 
       if (io) {
@@ -925,14 +1293,9 @@ router.patch(
           }
         );
 
-        /*
-          Deliver the original message
-          to users currently inside the
-          conversation.
-        */
         if (firstMessage) {
           io.to(
-            `conversation:${conversation._id}`
+            `conversation:${conversation._id.toString()}`
           ).emit(
             "new-message",
             firstMessage
@@ -966,10 +1329,14 @@ router.patch(
 
 
 /*
-  PATCH /api/conversations/requests/:requestId/decline
-
-  Decline an incoming message request.
+|--------------------------------------------------------------------------
+| DECLINE MESSAGE REQUEST
+|--------------------------------------------------------------------------
+|
+| PATCH /api/conversations/requests/:requestId/decline
+|--------------------------------------------------------------------------
 */
+
 router.patch(
   "/requests/:requestId/decline",
   protect,
@@ -992,8 +1359,8 @@ router.patch(
       }
 
       /*
-        Only recipient can decline.
-      */
+       * Only recipient can decline.
+       */
       const request =
         await MessageRequest.findOne({
           _id: requestId,
@@ -1009,15 +1376,26 @@ router.patch(
         });
       }
 
-      request.status =
-        "declined";
+      request.status = "declined";
 
       await request.save();
 
       /*
-        We intentionally don't notify the
-        sender about a decline.
-      */
+       * Realtime.
+       */
+      const io = req.app.get("io");
+
+      if (io) {
+        io.to(
+          `user:${request.sender.toString()}`
+        ).emit(
+          "message-request:declined",
+          {
+            requestId:
+              request._id,
+          }
+        );
+      }
 
       return res.status(200).json({
         success: true,
@@ -1042,20 +1420,14 @@ router.patch(
 
 
 /*
-  ============================================================
-  SPECIFIC DIRECT CONVERSATION
-  ============================================================
+|--------------------------------------------------------------------------
+| GET SPECIFIC DIRECT CONVERSATION
+|--------------------------------------------------------------------------
+|
+| GET /api/conversations/:conversationId
+|--------------------------------------------------------------------------
 */
 
-
-/*
-  GET /api/conversations/:conversationId
-
-  Get a specific DIRECT conversation.
-
-  Group conversations should be accessed through:
-  GET /api/groups/:groupId
-*/
 router.get(
   "/:conversationId",
   protect,
@@ -1065,9 +1437,6 @@ router.get(
         conversationId,
       } = req.params;
 
-      /*
-        Validate conversation ID.
-      */
       if (
         !mongoose.Types.ObjectId.isValid(
           conversationId
@@ -1080,9 +1449,6 @@ router.get(
         });
       }
 
-      /*
-        Explicitly require type: "direct".
-      */
       const conversation =
         await getDirectConversationForUser(
           conversationId,
@@ -1097,13 +1463,45 @@ router.get(
         });
       }
 
+      /*
+       * Final self-chat protection.
+       */
+      const participantIds =
+        conversation.participants.map(
+          getId
+        );
+
+      const otherParticipantId =
+        participantIds.find(
+          (id) =>
+            id !==
+            req.user._id.toString()
+        );
+
+      if (
+        !otherParticipantId ||
+        otherParticipantId ===
+          req.user._id.toString()
+      ) {
+        return res.status(404).json({
+          success: false,
+          message:
+            "Conversation not found.",
+        });
+      }
+
       const populatedConversation =
         await Conversation.findById(
           conversation._id
-        ).populate(
-          "participants",
-          "username avatar bio college branch semester"
-        );
+        )
+          .populate(
+            "participants",
+            "username avatar bio college branch semester"
+          )
+          .populate(
+            "lastMessage",
+            "text sender createdAt"
+          );
 
       return res.status(200).json({
         success: true,

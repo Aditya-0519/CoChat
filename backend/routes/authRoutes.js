@@ -12,15 +12,29 @@ const router = express.Router();
 const googleClient = new OAuth2Client(
   process.env.GOOGLE_CLIENT_ID
 );
-// ==========================================
-// HELPERS
-// ==========================================
+
+/*
+|--------------------------------------------------------------------------
+| CONSTANTS
+|--------------------------------------------------------------------------
+*/
 
 const USERNAME_REGEX = /^[a-zA-Z0-9_]+$/;
 
+const TOKEN_MAX_AGE =
+  7 * 24 * 60 * 60 * 1000;
+
+/*
+|--------------------------------------------------------------------------
+| JWT
+|--------------------------------------------------------------------------
+*/
+
 const createToken = (userId) => {
   return jwt.sign(
-    { userId },
+    {
+      userId: userId.toString(),
+    },
     process.env.JWT_SECRET,
     {
       expiresIn: "7d",
@@ -29,25 +43,33 @@ const createToken = (userId) => {
 };
 
 /*
- * Persistent authentication cookie.
- *
- * Production:
- * - HTTPS
- * - Secure
- * - SameSite=None
- * - 7-day Max-Age
- * - explicit 7-day Expires
- * - Path=/
- *
- * Development:
- * - HTTP
- * - SameSite=Lax
- */
+|--------------------------------------------------------------------------
+| AUTH COOKIE
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+|
+| Production frontend:
+|   https://cochat-alpha.vercel.app
+|
+| Production backend:
+|   https://cochat-g7qi.onrender.com
+|
+| Because these are different origins, the cookie must use:
+|
+|   Secure=true
+|   SameSite=None
+|
+| The cookie is intentionally host-only and belongs to the
+| backend origin. This allows both normal API requests and
+| Socket.IO requests to authenticate against Render.
+|
+|--------------------------------------------------------------------------
+*/
+
 const getTokenCookieOptions = () => {
   const isProduction =
     process.env.NODE_ENV === "production";
-
-  const maxAge = 7 * 24 * 60 * 60 * 1000;
 
   return {
     httpOnly: true,
@@ -60,13 +82,18 @@ const getTokenCookieOptions = () => {
 
     path: "/",
 
-    maxAge,
+    maxAge: TOKEN_MAX_AGE,
 
-    expires: new Date(Date.now() + maxAge),
+    expires: new Date(
+      Date.now() + TOKEN_MAX_AGE
+    ),
   };
 };
 
-const setTokenCookie = (res, token) => {
+const setTokenCookie = (
+  res,
+  token
+) => {
   res.cookie(
     "token",
     token,
@@ -74,34 +101,96 @@ const setTokenCookie = (res, token) => {
   );
 };
 
-const getUserResponse = (user) => ({
+const clearTokenCookie = (res) => {
+  const isProduction =
+    process.env.NODE_ENV === "production";
+
+  res.clearCookie("token", {
+    httpOnly: true,
+
+    secure: isProduction,
+
+    sameSite: isProduction
+      ? "none"
+      : "lax",
+
+    path: "/",
+  });
+};
+
+/*
+|--------------------------------------------------------------------------
+| USER RESPONSE
+|--------------------------------------------------------------------------
+|
+| IMPORTANT:
+|
+| We return BOTH:
+|
+|   _id
+|   id
+|
+| Older/newer frontend code in this project uses both.
+| Returning both prevents authentication state from becoming
+| partially undefined.
+|
+|--------------------------------------------------------------------------
+*/
+
+const getUserResponse = (
+  user
+) => ({
+  _id: user._id,
+
   id: user._id,
+
   username: user.username,
+
   email: user.email,
-  bio: user.bio,
-  avatar: user.avatar,
-  interests: user.interests,
-  college: user.college,
-  branch: user.branch,
-  semester: user.semester,
-  profileCompleted: user.profileCompleted,
-  authProvider: user.authProvider,
+
+  bio: user.bio || "",
+
+  avatar: user.avatar || "",
+
+  interests:
+    Array.isArray(user.interests)
+      ? user.interests
+      : [],
+
+  college: user.college || "",
+
+  branch: user.branch || "",
+
+  semester:
+    user.semester ?? null,
+
+  profileCompleted:
+    Boolean(user.profileCompleted),
+
+  authProvider:
+    user.authProvider || "local",
 });
-// ==========================================
-// CHECK USERNAME
-// ==========================================
+
+/*
+|--------------------------------------------------------------------------
+| CHECK USERNAME
+|--------------------------------------------------------------------------
+*/
 
 router.get(
   "/check-username/:username",
   async (req, res) => {
     try {
       const username =
-        req.params.username
+        String(
+          req.params.username || ""
+        )
           .trim()
           .toLowerCase();
 
       if (!username) {
         return res.status(400).json({
+          success: false,
           message:
             "Username is required.",
         });
@@ -113,6 +202,7 @@ router.get(
         });
 
       return res.json({
+        success: true,
         available: !exists,
       });
     } catch (error) {
@@ -122,6 +212,7 @@ router.get(
       );
 
       return res.status(500).json({
+        success: false,
         message:
           "Unable to check username.",
       });
@@ -129,9 +220,11 @@ router.get(
   }
 );
 
-// ==========================================
-// SIGNUP
-// ==========================================
+/*
+|--------------------------------------------------------------------------
+| SIGNUP
+|--------------------------------------------------------------------------
+*/
 
 router.post(
   "/signup",
@@ -141,7 +234,7 @@ router.post(
         username,
         email,
         password,
-      } = req.body;
+      } = req.body || {};
 
       if (
         !username ||
@@ -149,16 +242,23 @@ router.post(
         !password
       ) {
         return res.status(400).json({
+          success: false,
           message:
             "Username, email and password are required.",
         });
       }
 
       const cleanUsername =
-        username.trim();
+        String(username).trim();
 
       const cleanEmail =
-        email.trim().toLowerCase();
+        String(email)
+          .trim()
+          .toLowerCase();
+
+      /*
+       * Username validation.
+       */
 
       if (
         !USERNAME_REGEX.test(
@@ -166,6 +266,7 @@ router.post(
         )
       ) {
         return res.status(400).json({
+          success: false,
           message:
             "Username can only contain letters, numbers and underscores.",
         });
@@ -175,6 +276,7 @@ router.post(
         cleanUsername.length < 3
       ) {
         return res.status(400).json({
+          success: false,
           message:
             "Username must be at least 3 characters.",
         });
@@ -184,17 +286,27 @@ router.post(
         cleanUsername.length > 30
       ) {
         return res.status(400).json({
+          success: false,
           message:
             "Username cannot exceed 30 characters.",
         });
       }
 
+      /*
+       * Password validation.
+       */
+
       if (password.length < 6) {
         return res.status(400).json({
+          success: false,
           message:
             "Password must be at least 6 characters.",
         });
       }
+
+      /*
+       * Check email.
+       */
 
       const existingEmail =
         await User.findOne({
@@ -203,10 +315,15 @@ router.post(
 
       if (existingEmail) {
         return res.status(409).json({
+          success: false,
           message:
             "An account with this email already exists.",
         });
       }
+
+      /*
+       * Check username.
+       */
 
       const existingUsername =
         await User.findOne({
@@ -215,10 +332,15 @@ router.post(
 
       if (existingUsername) {
         return res.status(409).json({
+          success: false,
           message:
             "Username is already taken.",
         });
       }
+
+      /*
+       * Hash password.
+       */
 
       const hashedPassword =
         await bcrypt.hash(
@@ -226,30 +348,53 @@ router.post(
           12
         );
 
+      /*
+       * Create user.
+       */
+
       const user =
         await User.create({
           username:
             cleanUsername,
-          email: cleanEmail,
+
+          email:
+            cleanEmail,
+
           password:
             hashedPassword,
-          authProvider: "local",
+
+          authProvider:
+            "local",
+
           profileCompleted:
             false,
         });
 
+      /*
+       * Create JWT.
+       */
+
       const token =
         createToken(user._id);
 
+      /*
+       * IMPORTANT:
+       * Correct argument order.
+       *
+       * setTokenCookie(res, token)
+       */
+
       setTokenCookie(
-        req,
         res,
         token
       );
 
       return res.status(201).json({
+        success: true,
+
         message:
           "Account created successfully.",
+
         user:
           getUserResponse(user),
       });
@@ -259,7 +404,23 @@ router.post(
         error
       );
 
+      /*
+       * Handle Mongo duplicate key
+       * safely.
+       */
+
+      if (
+        error?.code === 11000
+      ) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "Username or email is already in use.",
+        });
+      }
+
       return res.status(500).json({
+        success: false,
         message:
           "Unable to create account.",
       });
@@ -267,9 +428,11 @@ router.post(
   }
 );
 
-// ==========================================
-// LOGIN
-// ==========================================
+/*
+|--------------------------------------------------------------------------
+| LOGIN
+|--------------------------------------------------------------------------
+*/
 
 router.post(
   "/login",
@@ -278,17 +441,21 @@ router.post(
       const {
         email,
         password,
-      } = req.body;
+      } = req.body || {};
 
-      if (!email || !password) {
+      if (
+        !email ||
+        !password
+      ) {
         return res.status(400).json({
+          success: false,
           message:
             "Email and password are required.",
         });
       }
 
       const cleanEmail =
-        email
+        String(email)
           .trim()
           .toLowerCase();
 
@@ -299,14 +466,19 @@ router.post(
 
       if (!user) {
         return res.status(401).json({
+          success: false,
           message:
             "Invalid email or password.",
         });
       }
 
-      // Google-only account
+      /*
+       * Google-only account.
+       */
+
       if (!user.password) {
         return res.status(400).json({
+          success: false,
           message:
             "This account uses Google login. Please continue with Google.",
         });
@@ -320,23 +492,35 @@ router.post(
 
       if (!passwordMatches) {
         return res.status(401).json({
+          success: false,
           message:
             "Invalid email or password.",
         });
       }
 
+      /*
+       * Create JWT.
+       */
+
       const token =
         createToken(user._id);
 
+      /*
+       * IMPORTANT:
+       * Correct argument order.
+       */
+
       setTokenCookie(
-        req,
         res,
         token
       );
 
       return res.json({
+        success: true,
+
         message:
           "Login successful.",
+
         user:
           getUserResponse(user),
       });
@@ -347,6 +531,7 @@ router.post(
       );
 
       return res.status(500).json({
+        success: false,
         message:
           "Unable to log in.",
       });
@@ -354,19 +539,25 @@ router.post(
   }
 );
 
-// ==========================================
-// GOOGLE LOGIN
-// ==========================================
+/*
+|--------------------------------------------------------------------------
+| GOOGLE LOGIN
+|--------------------------------------------------------------------------
+*/
 
 router.post(
   "/google",
   async (req, res) => {
     try {
-      const { credential } = req.body;
+      const {
+        credential,
+      } = req.body || {};
 
       if (!credential) {
         return res.status(400).json({
-          message: "Google credential is required.",
+          success: false,
+          message:
+            "Google credential is required.",
         });
       }
 
@@ -375,27 +566,19 @@ router.post(
 
       if (!googleClientId) {
         console.error(
-          "GOOGLE_CLIENT_ID is missing on the backend."
+          "GOOGLE_CLIENT_ID is missing."
         );
 
         return res.status(500).json({
+          success: false,
           message:
             "Google login is not configured on the server.",
         });
       }
 
-      console.log(
-        "Google login attempt received."
-      );
-
-      console.log(
-        "Google Client ID configured:",
-        `${googleClientId.substring(0, 20)}...`
-      );
-
-      // ==========================================
-      // VERIFY GOOGLE ID TOKEN
-      // ==========================================
+      /*
+       * Verify Google credential.
+       */
 
       let ticket;
 
@@ -403,19 +586,18 @@ router.post(
         ticket =
           await googleClient.verifyIdToken({
             idToken: credential,
-            audience: googleClientId,
+            audience:
+              googleClientId,
           });
       } catch (googleError) {
         console.error(
-          "Google ID token verification failed:"
-        );
-
-        console.error(
+          "Google token verification failed:",
           googleError?.message ||
             googleError
         );
 
         return res.status(401).json({
+          success: false,
           message:
             "Google authentication failed. The Google credential could not be verified.",
         });
@@ -425,11 +607,8 @@ router.post(
         ticket.getPayload();
 
       if (!payload) {
-        console.error(
-          "Google token verification returned no payload."
-        );
-
         return res.status(401).json({
+          success: false,
           message:
             "Invalid Google credential.",
         });
@@ -438,18 +617,15 @@ router.post(
       const {
         sub: googleId,
         email,
-        email_verified: emailVerified,
+        email_verified:
+          emailVerified,
         name,
         picture,
       } = payload;
 
-      console.log(
-        "Google identity verified:",
-        email
-      );
-
       if (!googleId) {
         return res.status(401).json({
+          success: false,
           message:
             "Google account ID is missing.",
         });
@@ -457,6 +633,7 @@ router.post(
 
       if (!email) {
         return res.status(401).json({
+          success: false,
           message:
             "Google account email is missing.",
         });
@@ -464,6 +641,7 @@ router.post(
 
       if (!emailVerified) {
         return res.status(401).json({
+          success: false,
           message:
             "Your Google email could not be verified.",
         });
@@ -472,17 +650,20 @@ router.post(
       const cleanEmail =
         email.trim().toLowerCase();
 
-      // ==========================================
-      // FIND EXISTING GOOGLE ACCOUNT
-      // ==========================================
+      /*
+       * Find Google account.
+       */
 
-      let user = await User.findOne({
-        googleId,
-      });
+      let user =
+        await User.findOne({
+          googleId,
+        });
 
-      // ==========================================
-      // EXISTING EMAIL ACCOUNT
-      // ==========================================
+      /*
+       * If no Google ID exists,
+       * check whether email belongs
+       * to another account.
+       */
 
       if (!user) {
         const existingUser =
@@ -492,31 +673,39 @@ router.post(
 
         if (existingUser) {
           return res.status(409).json({
+            success: false,
             message:
               "An account with this email already exists. Log in with your email and password first.",
           });
         }
 
-        // ==========================================
-        // GENERATE UNIQUE USERNAME
-        // ==========================================
+        /*
+         * Generate username.
+         */
 
         let baseUsername =
-          (name || "user")
+          String(name || "user")
             .replace(
               /[^a-zA-Z0-9]/g,
               ""
             )
             .toLowerCase();
 
-        if (baseUsername.length < 3) {
+        if (
+          baseUsername.length < 3
+        ) {
           baseUsername = "user";
         }
 
         baseUsername =
-          baseUsername.substring(0, 25);
+          baseUsername.substring(
+            0,
+            25
+          );
 
-        let username = baseUsername;
+        let username =
+          baseUsername;
+
         let counter = 1;
 
         while (
@@ -526,68 +715,83 @@ router.post(
         ) {
           username =
             `${baseUsername}${counter}`;
+
           counter++;
         }
 
-        // ==========================================
-        // CREATE GOOGLE USER
-        // ==========================================
+        /*
+         * Create Google user.
+         */
 
-        user = await User.create({
-          username,
-          email: cleanEmail,
-          googleId,
-          authProvider: "google",
-          avatar: picture || "",
-          profileCompleted: false,
-        });
+        user =
+          await User.create({
+            username,
 
-        console.log(
-          "New Google user created:",
-          user._id.toString()
-        );
+            email:
+              cleanEmail,
+
+            googleId,
+
+            authProvider:
+              "google",
+
+            avatar:
+              picture || "",
+
+            profileCompleted:
+              false,
+          });
       }
 
-      // ==========================================
-      // CREATE COCHAT JWT
-      // ==========================================
+      /*
+       * Create CoChat JWT.
+       */
 
       const token =
         createToken(user._id);
 
-      setTokenCookie(res, token);
-
-      console.log(
-        "Google login successful:",
-        user.email
+      setTokenCookie(
+        res,
+        token
       );
 
       return res.json({
+        success: true,
+
         message:
           "Google login successful.",
-        user: getUserResponse(user),
+
+        user:
+          getUserResponse(user),
       });
     } catch (error) {
       console.error(
-        "Google login route error:"
-      );
-
-      console.error(
-        error?.stack ||
-          error?.message ||
-          error
+        "Google login route error:",
+        error
       );
 
       return res.status(500).json({
+        success: false,
         message:
           "Unable to complete Google login. Please try again.",
       });
     }
   }
 );
-// ==========================================
-// CURRENT USER
-// ==========================================
+
+/*
+|--------------------------------------------------------------------------
+| CURRENT USER
+|--------------------------------------------------------------------------
+|
+| This endpoint is what restores authentication after:
+|
+| - browser refresh
+| - reopening the website
+| - navigating directly to a protected URL
+|
+|--------------------------------------------------------------------------
+*/
 
 router.get(
   "/me",
@@ -595,6 +799,8 @@ router.get(
   async (req, res) => {
     try {
       return res.json({
+        success: true,
+
         user:
           getUserResponse(
             req.user
@@ -607,6 +813,7 @@ router.get(
       );
 
       return res.status(500).json({
+        success: false,
         message:
           "Unable to get current user.",
       });
@@ -614,33 +821,30 @@ router.get(
   }
 );
 
-// ==========================================
-// LOGOUT
-// ==========================================
+/*
+|--------------------------------------------------------------------------
+| LOGOUT
+|--------------------------------------------------------------------------
+*/
 
 router.post(
   "/logout",
   (req, res) => {
-    const isProduction =
-      process.env.NODE_ENV === "production";
-
-    res.clearCookie("token", {
-      httpOnly: true,
-      secure: isProduction,
-      sameSite: isProduction
-        ? "none"
-        : "lax",
-      path: "/",
-    });
+    clearTokenCookie(res);
 
     return res.json({
-      message: "Logged out successfully.",
+      success: true,
+      message:
+        "Logged out successfully.",
     });
   }
 );
-// ==========================================
-// UPDATE PROFILE
-// ==========================================
+
+/*
+|--------------------------------------------------------------------------
+| UPDATE PROFILE
+|--------------------------------------------------------------------------
+*/
 
 router.put(
   "/profile",
@@ -653,7 +857,7 @@ router.put(
         college,
         branch,
         semester,
-      } = req.body;
+      } = req.body || {};
 
       const user =
         await User.findById(
@@ -662,12 +866,15 @@ router.put(
 
       if (!user) {
         return res.status(404).json({
+          success: false,
           message:
             "User not found.",
         });
       }
 
-      if (bio !== undefined) {
+      if (
+        bio !== undefined
+      ) {
         user.bio = bio;
       }
 
@@ -675,17 +882,25 @@ router.put(
         interests !== undefined
       ) {
         user.interests =
-          interests;
+          Array.isArray(
+            interests
+          )
+            ? interests
+            : [];
       }
 
-      if (college !== undefined) {
+      if (
+        college !== undefined
+      ) {
         user.college =
-          college;
+          String(college).trim();
       }
 
-      if (branch !== undefined) {
+      if (
+        branch !== undefined
+      ) {
         user.branch =
-          branch;
+          String(branch).trim();
       }
 
       if (
@@ -695,19 +910,29 @@ router.put(
           semester;
       }
 
+      /*
+       * Determine profile completion.
+       */
+
       user.profileCompleted =
         Boolean(
           user.college &&
             user.branch &&
             user.semester &&
-            user.interests?.length
+            Array.isArray(
+              user.interests
+            ) &&
+            user.interests.length > 0
         );
 
       await user.save();
 
       return res.json({
+        success: true,
+
         message:
           "Profile updated successfully.",
+
         user:
           getUserResponse(user),
       });
@@ -718,6 +943,7 @@ router.put(
       );
 
       return res.status(500).json({
+        success: false,
         message:
           "Unable to update profile.",
       });
@@ -725,9 +951,11 @@ router.put(
   }
 );
 
-// ==========================================
-// UPLOAD AVATAR
-// ==========================================
+/*
+|--------------------------------------------------------------------------
+| UPLOAD AVATAR
+|--------------------------------------------------------------------------
+*/
 
 router.post(
   "/profile/avatar",
@@ -739,6 +967,7 @@ router.post(
     try {
       if (!req.file) {
         return res.status(400).json({
+          success: false,
           message:
             "Please select an image.",
         });
@@ -751,6 +980,7 @@ router.post(
 
       if (!user) {
         return res.status(404).json({
+          success: false,
           message:
             "User not found.",
         });
@@ -764,8 +994,11 @@ router.post(
       await user.save();
 
       return res.json({
+        success: true,
+
         message:
           "Avatar updated successfully.",
+
         user:
           getUserResponse(user),
       });
@@ -776,6 +1009,7 @@ router.post(
       );
 
       return res.status(500).json({
+        success: false,
         message:
           "Unable to upload avatar.",
       });
