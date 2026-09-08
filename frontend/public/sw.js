@@ -1,6 +1,25 @@
-const CACHE_NAME = "cochat-shell-v1";
+/*
+|--------------------------------------------------------------------------
+| CoChat Service Worker
+|--------------------------------------------------------------------------
+|
+| Handles:
+|
+| 1. PWA installation
+| 2. Offline shell
+| 3. Web Push
+| 4. Notification clicks
+| 5. Push subscription changes
+|
+|--------------------------------------------------------------------------
+*/
+
+const CACHE_NAME = "cochat-shell-v2";
 
 const DEFAULT_ICON =
+  "/icons/icon-192.png";
+
+const DEFAULT_BADGE =
   "/icons/icon-192.png";
 
 const SHELL_ASSETS = [
@@ -11,11 +30,9 @@ const SHELL_ASSETS = [
 ];
 
 /*
-  =====================================================
-  INSTALL
-  =====================================================
-  Cache the minimum PWA shell required for offline
-  navigation/fallback.
+|--------------------------------------------------------------------------
+| INSTALL
+|--------------------------------------------------------------------------
 */
 
 self.addEventListener(
@@ -29,17 +46,25 @@ self.addEventListener(
             SHELL_ASSETS
           )
         )
+        .catch((error) => {
+          console.error(
+            "CoChat service worker cache install failed:",
+            error
+          );
+        })
     );
 
+    /*
+     * Activate the new worker immediately.
+     */
     self.skipWaiting();
   }
 );
 
 /*
-  =====================================================
-  ACTIVATE
-  =====================================================
-  Remove old CoChat caches.
+|--------------------------------------------------------------------------
+| ACTIVATE
+|--------------------------------------------------------------------------
 */
 
 self.addEventListener(
@@ -72,12 +97,9 @@ self.addEventListener(
 );
 
 /*
-  =====================================================
-  FETCH
-  =====================================================
-  API requests are deliberately not cached.
-  Navigation requests fall back to the app shell.
-  Static resources use cache-first behavior.
+|--------------------------------------------------------------------------
+| FETCH
+|--------------------------------------------------------------------------
 */
 
 self.addEventListener(
@@ -86,6 +108,9 @@ self.addEventListener(
     const request =
       event.request;
 
+    /*
+     * Only handle GET.
+     */
     if (
       request.method !==
       "GET"
@@ -98,6 +123,10 @@ self.addEventListener(
         request.url
       );
 
+    /*
+     * Never interfere with requests
+     * going to another origin.
+     */
     if (
       url.origin !==
       self.location.origin
@@ -106,9 +135,8 @@ self.addEventListener(
     }
 
     /*
-      Never cache authenticated/API
-      responses in this service worker.
-    */
+     * Never cache API responses.
+     */
     if (
       url.pathname.startsWith(
         "/api/"
@@ -118,9 +146,22 @@ self.addEventListener(
     }
 
     /*
-      SPA navigation:
-      network first, then cached app shell.
-    */
+     * Never cache the service worker
+     * itself.
+     */
+    if (
+      url.pathname ===
+      "/sw.js"
+    ) {
+      return;
+    }
+
+    /*
+     * SPA navigation.
+     *
+     * Network first.
+     * Cached shell as fallback.
+     */
     if (
       request.mode ===
       "navigate"
@@ -143,48 +184,55 @@ self.addEventListener(
     }
 
     /*
-      Static assets:
-      cache first, then network.
-    */
+     * Static resources.
+     *
+     * Cache first.
+     */
     event.respondWith(
       caches
         .match(request)
         .then(
-          (cached) => {
-            if (cached) {
-              return cached;
+          (cachedResponse) => {
+            if (
+              cachedResponse
+            ) {
+              return cachedResponse;
             }
 
-            return fetch(request).then(
-              (response) => {
-                if (
-                  !response ||
-                  response.status !==
-                    200 ||
-                  response.type !==
-                    "basic"
-                ) {
+            return fetch(request)
+              .then(
+                (response) => {
+                  if (
+                    !response ||
+                    response.status !==
+                      200 ||
+                    response.type !==
+                      "basic"
+                  ) {
+                    return response;
+                  }
+
+                  const responseCopy =
+                    response.clone();
+
+                  caches
+                    .open(
+                      CACHE_NAME
+                    )
+                    .then(
+                      (cache) =>
+                        cache.put(
+                          request,
+                          responseCopy
+                        )
+                    )
+                    .catch(
+                      () => {}
+                    );
+
                   return response;
                 }
-
-                const copy =
-                  response.clone();
-
-                caches
-                  .open(
-                    CACHE_NAME
-                  )
-                  .then(
-                    (cache) =>
-                      cache.put(
-                        request,
-                        copy
-                      )
-                  );
-
-                return response;
-              }
-            );
+              );
           }
         )
     );
@@ -192,74 +240,166 @@ self.addEventListener(
 );
 
 /*
-  =====================================================
-  WEB PUSH
-  =====================================================
+|--------------------------------------------------------------------------
+| PUSH EVENT
+|--------------------------------------------------------------------------
+|
+| This is the most important part.
+|
+| The browser can be completely closed/minimized and this
+| service worker can still receive a Web Push event.
+|
+|--------------------------------------------------------------------------
 */
 
 self.addEventListener(
   "push",
   (event) => {
+    console.log(
+      "CoChat push event received."
+    );
+
     let data = {};
 
-    try {
-      data =
-        event.data
-          ? event.data.json()
-          : {};
-    } catch (error) {
-      console.error(
-        "Unable to parse push payload:",
-        error
-      );
+    /*
+     * Try JSON first.
+     */
+    if (event.data) {
+      try {
+        data =
+          event.data.json();
+      } catch (jsonError) {
+        /*
+         * Some push providers may send plain text.
+         */
+        try {
+          data = {
+            body:
+              event.data.text(),
+          };
+        } catch (textError) {
+          console.error(
+            "Unable to read push payload:",
+            textError
+          );
+        }
+      }
     }
 
+    /*
+     * Normalize payload.
+     */
     const title =
-      data.title ||
+      data?.title ||
       "CoChat";
 
-    const url =
-      data.url ||
+    const body =
+      data?.body ||
+      "You have a new notification.";
+
+    const targetUrl =
+      data?.url ||
       "/notifications";
 
+    const icon =
+      data?.icon ||
+      DEFAULT_ICON;
+
+    const badge =
+      data?.badge ||
+      DEFAULT_BADGE;
+
+    /*
+     * Use a unique tag by default.
+     *
+     * This prevents unrelated notifications from
+     * replacing each other.
+     */
+    const tag =
+      data?.tag ||
+      `cochat-${Date.now()}`;
+
+    const renotify =
+      data?.renotify !== false;
+
+    /*
+     * Notification options.
+     */
+    const notificationOptions = {
+      body,
+
+      icon,
+
+      badge,
+
+      tag,
+
+      renotify,
+
+      requireInteraction:
+        Boolean(
+          data?.requireInteraction
+        ),
+
+      timestamp:
+        Date.now(),
+
+      vibrate: [
+        100,
+        50,
+        100,
+      ],
+
+      data: {
+        url:
+          targetUrl,
+
+        type:
+          data?.type ||
+          "general",
+
+        conversationId:
+          data?.conversationId ||
+          null,
+
+        notificationId:
+          data?.notificationId ||
+          null,
+      },
+    };
+
+    /*
+     * IMPORTANT:
+     *
+     * waitUntil keeps the service worker alive
+     * until showNotification has finished.
+     */
     event.waitUntil(
-      self.registration.showNotification(
-        title,
-        {
-          body:
-            data.body ||
-            "You have a new notification.",
-
-          icon:
-            data.icon ||
-            DEFAULT_ICON,
-
-          badge:
-            data.badge ||
-            DEFAULT_ICON,
-
-          tag:
-            data.tag ||
-            "cochat-notification",
-
-          renotify:
-            Boolean(
-              data.renotify
-            ),
-
-          data: {
-            url,
-          },
-        }
-      )
+      self.registration
+        .showNotification(
+          title,
+          notificationOptions
+        )
+        .then(() => {
+          console.log(
+            "CoChat notification displayed:",
+            title
+          );
+        })
+        .catch((error) => {
+          console.error(
+            "CoChat showNotification failed:",
+            error
+          );
+        })
     );
   }
 );
 
 /*
-  =====================================================
-  NOTIFICATION CLICK
-  =====================================================
+|--------------------------------------------------------------------------
+| NOTIFICATION CLICK
+|--------------------------------------------------------------------------
 */
 
 self.addEventListener(
@@ -267,16 +407,29 @@ self.addEventListener(
   (event) => {
     event.notification.close();
 
+    const notificationData =
+      event.notification?.data ||
+      {};
+
     const targetUrl =
-      event.notification?.data
-        ?.url ||
+      notificationData.url ||
       "/notifications";
 
-    const absoluteTarget =
-      new URL(
-        targetUrl,
-        self.location.origin
-      ).href;
+    let absoluteTarget;
+
+    try {
+      absoluteTarget =
+        new URL(
+          targetUrl,
+          self.location.origin
+        ).href;
+    } catch (error) {
+      absoluteTarget =
+        new URL(
+          "/notifications",
+          self.location.origin
+        ).href;
+    }
 
     event.waitUntil(
       self.clients
@@ -285,7 +438,12 @@ self.addEventListener(
           includeUncontrolled: true,
         })
         .then(
-          (clientList) => {
+          async (
+            clientList
+          ) => {
+            /*
+             * Prefer an existing CoChat tab.
+             */
             const existingClient =
               clientList.find(
                 (client) =>
@@ -297,18 +455,96 @@ self.addEventListener(
             if (
               existingClient
             ) {
-              return existingClient
-                .navigate(
+              try {
+                await existingClient.navigate(
                   absoluteTarget
-                )
-                .then(() =>
-                  existingClient.focus()
                 );
+              } catch (error) {
+                console.warn(
+                  "Unable to navigate existing client:",
+                  error
+                );
+              }
+
+              try {
+                await existingClient.focus();
+              } catch (error) {
+                console.warn(
+                  "Unable to focus existing client:",
+                  error
+                );
+              }
+
+              return;
             }
 
-            return self.clients.openWindow(
+            /*
+             * No existing window.
+             *
+             * Open CoChat.
+             */
+            await self.clients.openWindow(
               absoluteTarget
             );
+          }
+        )
+    );
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| NOTIFICATION CLOSE
+|--------------------------------------------------------------------------
+*/
+
+self.addEventListener(
+  "notificationclose",
+  () => {
+    /*
+     * Reserved for future analytics.
+     */
+  }
+);
+
+/*
+|--------------------------------------------------------------------------
+| PUSH SUBSCRIPTION CHANGE
+|--------------------------------------------------------------------------
+|
+| Browsers can rotate push subscriptions.
+|
+| When that happens the old endpoint becomes invalid.
+|
+| We notify the currently open CoChat page so the frontend
+| can create and synchronize a new subscription.
+|
+|--------------------------------------------------------------------------
+*/
+
+self.addEventListener(
+  "pushsubscriptionchange",
+  (event) => {
+    console.log(
+      "CoChat push subscription changed."
+    );
+
+    event.waitUntil(
+      self.clients
+        .matchAll({
+          type: "window",
+          includeUncontrolled: true,
+        })
+        .then(
+          (clients) => {
+            for (
+              const client of clients
+            ) {
+              client.postMessage({
+                type:
+                  "PUSH_SUBSCRIPTION_CHANGED",
+              });
+            }
           }
         )
     );

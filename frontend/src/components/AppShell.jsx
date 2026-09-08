@@ -27,6 +27,7 @@ import {
   getUnreadNotificationCount,
   registerNotificationWorker,
   syncNotificationSubscription,
+  handlePushSubscriptionChange,
 } from "../services/notificationService";
 
 import {
@@ -222,45 +223,113 @@ function AppShell({ children }) {
    * We NEVER request permission from AppShell.
    */
 
-  useEffect(() => {
-    if (!user?._id) {
-      return undefined;
-    }
+useEffect(() => {
+  if (!user?._id) {
+    return undefined;
+  }
 
-    let cancelled = false;
+  let cancelled = false;
 
-    const setupNotifications =
-      async () => {
-        try {
-          await registerNotificationWorker();
+  const setupNotifications =
+    async () => {
+      try {
+        /*
+         * Always make sure the service worker exists.
+         */
+        await registerNotificationWorker();
 
-          if (
-            cancelled
-          ) {
-            return;
-          }
-
-          if (
-            "Notification" in window &&
-            Notification.permission ===
-              "granted"
-          ) {
-            await syncNotificationSubscription();
-          }
-        } catch (error) {
-          console.error(
-            "Notification setup error:",
-            error
-          );
+        if (
+          cancelled
+        ) {
+          return;
         }
-      };
 
-    setupNotifications();
-
-    return () => {
-      cancelled = true;
+        /*
+         * If the user has already granted notification
+         * permission, silently repair/synchronize the
+         * push subscription.
+         */
+        if (
+          "Notification" in
+            window &&
+          Notification.permission ===
+            "granted"
+        ) {
+          await syncNotificationSubscription();
+        }
+      } catch (error) {
+        /*
+         * Push setup must NEVER prevent the application
+         * itself from working.
+         */
+        console.error(
+          "CoChat notification setup error:",
+          error
+        );
+      }
     };
-  }, [user?._id]);
+
+  setupNotifications();
+
+  /*
+   * Browser can rotate a push subscription.
+   *
+   * The service worker sends this message to the page.
+   */
+  const handleServiceWorkerMessage =
+    (event) => {
+      if (
+        event.data?.type ===
+        "PUSH_SUBSCRIPTION_CHANGED"
+      ) {
+        handlePushSubscriptionChange();
+      }
+    };
+
+  navigator.serviceWorker?.addEventListener(
+    "message",
+    handleServiceWorkerMessage
+  );
+
+  /*
+   * If the page becomes visible again, synchronize
+   * the subscription.
+   *
+   * This is useful when:
+   *
+   * - another tab changed the subscription
+   * - Chrome refreshed the subscription
+   * - the server removed an expired subscription
+   */
+  const handleVisibilityChange =
+    () => {
+      if (
+        document.visibilityState ===
+        "visible"
+      ) {
+        handlePushSubscriptionChange();
+      }
+    };
+
+  document.addEventListener(
+    "visibilitychange",
+    handleVisibilityChange
+  );
+
+  return () => {
+    cancelled = true;
+
+    navigator.serviceWorker?.removeEventListener(
+      "message",
+      handleServiceWorkerMessage
+    );
+
+    document.removeEventListener(
+      "visibilitychange",
+      handleVisibilityChange
+    );
+  };
+}, [user?._id]);
 
   /*
    * =====================================================
